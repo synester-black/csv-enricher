@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: csv-enricher
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - SECRET_KEY=${SECRET_KEY:-change-this-to-a-random-string}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-https://ollama.com}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-gemma3:27b}
+      - OLLAMA_API_KEY=${OLLAMA_API_KEY}
+      - MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID}
+      - MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET}
+      - MICROSOFT_TENANT_ID=${MICROSOFT_TENANT_ID}
+      - MICROSOFT_ALLOWED_DOMAIN=${MICROSOFT_ALLOWED_DOMAIN:-vicit.com}
+    volumes:
+      - uploads_data:/app/uploads
+      - processed_data:/app/processed
+      - ./users.json:/app/users.json
+
+volumes:
+  uploads_data:
+  processed_data:

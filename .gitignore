@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+uploads/*
+processed/*
+!uploads/.gitkeep
+!processed/.gitkeep
+users.json
+.env
+*.egg-info/
+.DS_Store

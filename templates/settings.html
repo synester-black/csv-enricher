@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CSV Enricher - Settings</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+           background: #f0f2f5; min-height: 100vh; }
+    .nav { background: #1a1a2e; color: #fff; padding: 14px 24px; display: flex;
+           align-items: center; justify-content: space-between; font-size: 14px; }
+    .nav a { color: #a0aec0; text-decoration: none; margin-left: 20px; }
+    .nav a:hover { color: #fff; }
+    .container { max-width: 640px; margin: 40px auto; padding: 0 20px; }
+    .card { background: #fff; border-radius: 12px; padding: 32px 40px;
+            box-shadow: 0 2px 12px rgba(0,0,0,.08); margin-bottom: 20px; }
+    h1 { font-size: 20px; margin-bottom: 16px; }
+    h2 { font-size: 15px; margin-bottom: 12px; color: #444; padding-bottom: 6px; border-bottom: 1px solid #eee; }
+    label { display: block; font-size: 13px; font-weight: 600; color: #555; margin-bottom: 4px; }
+    input[type=text], input[type=url], input[type=password] { width: 100%; padding: 9px 12px; border: 1px solid #ddd;
+           border-radius: 6px; font-size: 14px; margin-bottom: 14px; }
+    .help { font-size: 12px; color: #888; margin-top: -10px; margin-bottom: 14px; }
+    button { padding: 10px 28px; background: #1a1a2e; color: #fff; border: none;
+             border-radius: 6px; font-size: 14px; cursor: pointer; }
+    button:hover { background: #16213e; }
+    .flash { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
+    .flash.success { background: #d4edda; color: #155724; }
+    .flash.error { background: #f8d7da; color: #721c24; }
+    .back { display: inline-block; margin-top: 16px; color: #1a1a2e; font-size: 14px; }
+    hr { border: none; border-top: 1px solid #eee; margin: 20px 0; }
+    .badge { display: inline-block; background: #e8f5e9; color: #2e7d32; font-size: 11px;
+             padding: 2px 8px; border-radius: 10px; margin-left: 6px; }
+  </style>
+</head>
+<body>
+  <div class="nav">
+    <span><strong>CSV Enricher</strong></span>
+    <span><a href="{{ url_for('upload') }}">&larr; Back</a></span>
+  </div>
+  <div class="container">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for cat, msg in messages %}
+        <div class="flash {{ cat }}">{{ msg }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    <form method="POST">
+      <div class="card">
+        <h2>Ollama <span class="badge">AI Engine</span></h2>
+        <label for="ollama_url">Ollama API URL</label>
+        <input type="url" name="ollama_url" id="ollama_url"
+               value="{{ ollama_url }}" placeholder="https://ollama.com">
+        <div class="help">Your Ollama server address (local or cloud).</div>
+
+        <label for="ollama_model">Model Name</label>
+        <input type="text" name="ollama_model" id="ollama_model"
+               value="{{ ollama_model }}" placeholder="gemma3:27b">
+        <div class="help">Model available on your Ollama server (e.g. gemma3:27b, qwen3-coder:480b, deepseek-v3.1:671b).</div>
+
+        <label for="ollama_api_key">API Key</label>
+        <input type="password" name="ollama_api_key" id="ollama_api_key"
+               value="{{ ollama_api_key }}" placeholder="Bearer token if required">
+        <div class="help">Leave blank if your Ollama server doesn't require authentication.</div>
+      </div>
+
+      <div class="card">
+        <h2>Microsoft Entra ID SSO <span class="badge">Optional</span></h2>
+        <label for="app_url">App Public URL</label>
+        <input type="url" name="app_url" id="app_url"
+               value="{{ app_url }}" placeholder="https://yourapp.com">
+        <div class="help">Must match the Redirect URI registered in Azure (e.g. https://yourapp.com). Used for SSO callback.</div>
+
+        <label for="microsoft_tenant_id">Tenant ID (Directory ID)</label>
+        <input type="text" name="microsoft_tenant_id" id="microsoft_tenant_id"
+               value="{{ microsoft_tenant_id }}" placeholder="00000000-0000-0000-0000-000000000000">
+        <div class="help">Found in Azure AD &rarr; Overview &rarr; Directory (tenant) ID.</div>
+
+        <label for="microsoft_client_id">Client ID (Application ID)</label>
+        <input type="text" name="microsoft_client_id" id="microsoft_client_id"
+               value="{{ microsoft_client_id }}" placeholder="00000000-0000-0000-0000-000000000000">
+        <div class="help">Found in Azure AD &rarr; App registrations &rarr; Your app &rarr; Application (client) ID.</div>
+
+        <label for="microsoft_client_secret">Client Secret</label>
+        <input type="password" name="microsoft_client_secret" id="microsoft_client_secret"
+               value="{{ microsoft_client_secret }}" placeholder="Generated in Azure AD">
+        <div class="help">Create in Azure AD &rarr; App registrations &rarr; Your app &rarr; Certificates & secrets.</div>
+
+        <label for="microsoft_allowed_domain">Restrict to Domain</label>
+        <input type="text" name="microsoft_allowed_domain" id="microsoft_allowed_domain"
+               value="{{ microsoft_allowed_domain }}" placeholder="vicit.com">
+        <div class="help">Only allow users with this email domain. Leave blank to allow any Microsoft account.</div>
+      </div>
+
+      <div class="card">
+        <h2>Prompts <span class="badge">Customise</span></h2>
+
+        <label for="software_prompt">Software Research Prompt</label>
+        <textarea name="software_prompt" id="software_prompt" rows="8"
+          style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;font-family:monospace;margin-bottom:14px;">{{ software_prompt }}</textarea>
+        <div class="help">Uses {company_name} and {company_domain} as placeholders. Must return valid JSON.</div>
+
+        <label for="intent_prompt">Intent Research Prompt</label>
+        <textarea name="intent_prompt" id="intent_prompt" rows="8"
+          style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;font-family:monospace;margin-bottom:14px;">{{ intent_prompt }}</textarea>
+        <div class="help">Uses {company_name} and {company_domain} as placeholders. Must return valid JSON.</div>
+
+        <label for="tier_prompt">Tier Classification Prompt</label>
+        <textarea name="tier_prompt" id="tier_prompt" rows="8"
+          style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;font-family:monospace;margin-bottom:14px;">{{ tier_prompt }}</textarea>
+        <div class="help">Uses {titles} as placeholder (newline-separated list). Must map each title to a tier value (e.g. <code>{"title": "Tier 1"}</code>).</div>
+      </div>
+
+      <div style="text-align:center;margin-bottom:20px;">
+        <button type="submit">Save All Settings</button>
+      </div>
+    </form>
+    <a class="back" href="{{ url_for('upload') }}">&larr; Back to Upload</a>
+  </div>
+</body>
+</html>

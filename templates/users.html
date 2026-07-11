@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CSV Enricher - Users</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+           background: #f0f2f5; min-height: 100vh; }
+    .nav { background: #1a1a2e; color: #fff; padding: 14px 24px; display: flex;
+           align-items: center; justify-content: space-between; font-size: 14px; }
+    .nav a { color: #a0aec0; text-decoration: none; margin-left: 20px; }
+    .nav a:hover { color: #fff; }
+    .container { max-width: 640px; margin: 60px auto; padding: 0 20px; }
+    .card { background: #fff; border-radius: 12px; padding: 40px;
+            box-shadow: 0 2px 12px rgba(0,0,0,.08); margin-bottom: 20px; }
+    h1 { font-size: 22px; margin-bottom: 16px; }
+    h2 { font-size: 16px; margin-bottom: 12px; color: #444; }
+    label { display: block; font-size: 13px; font-weight: 600; color: #555; margin-bottom: 4px; }
+    input[type=text], input[type=password] { width: 100%; padding: 9px 12px; border: 1px solid #ddd;
+           border-radius: 6px; font-size: 14px; margin-bottom: 12px; }
+    button { padding: 9px 20px; background: #1a1a2e; color: #fff; border: none;
+             border-radius: 6px; font-size: 14px; cursor: pointer; }
+    button:hover { background: #16213e; }
+    button.danger { background: #dc3545; }
+    button.danger:hover { background: #c82333; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { padding: 10px 8px; text-align: left; border-bottom: 1px solid #eee; }
+    th { font-weight: 600; color: #555; }
+    .flash { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
+    .flash.success { background: #d4edda; color: #155724; }
+    .flash.error { background: #f8d7da; color: #721c24; }
+    .back { display: inline-block; margin-top: 16px; color: #1a1a2e; font-size: 14px; }
+    .row { display: flex; gap: 12px; align-items: end; }
+    .row > * { flex: 1; }
+  </style>
+</head>
+<body>
+  <div class="nav">
+    <span><strong>CSV Enricher</strong></span>
+    <span><a href="{{ url_for('upload') }}">&larr; Back</a></span>
+  </div>
+  <div class="container">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for cat, msg in messages %}
+        <div class="flash {{ cat }}">{{ msg }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    <div class="card">
+      <h1>User Management</h1>
+
+      <h2>Add User</h2>
+      <form method="POST">
+        <input type="hidden" name="action" value="add">
+        <div class="row">
+          <div>
+            <label>Username</label>
+            <input type="text" name="username" required>
+          </div>
+          <div>
+            <label>Password</label>
+            <input type="password" name="password" required>
+          </div>
+          <div>
+            <label>Display Name</label>
+            <input type="text" name="name">
+          </div>
+          <button type="submit">Add</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Users</h2>
+      <table>
+        <tr><th>Username</th><th>Name</th><th></th></tr>
+        {% for u, info in users.items() %}
+        <tr>
+          <td>{{ u }}</td>
+          <td>{{ info.name }}</td>
+          <td>
+            {% if u != current_user %}
+            <form method="POST" style="display:inline" onsubmit="return confirm('Delete {{ u }}?')">
+              <input type="hidden" name="action" value="delete">
+              <input type="hidden" name="username" value="{{ u }}">
+              <button class="danger" type="submit">Delete</button>
+            </form>
+            {% else %}
+            <span style="color:#999">(you)</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Change Your Password</h2>
+      <form method="POST">
+        <input type="hidden" name="action" value="change_password">
+        <label>Current Password</label>
+        <input type="password" name="old_password" required>
+        <label>New Password</label>
+        <input type="password" name="new_password" required>
+        <button type="submit">Change</button>
+      </form>
+    </div>
+
+    <a class="back" href="{{ url_for('upload') }}">&larr; Back to Upload</a>
+  </div>
+</body>
+</html>

@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CSV Enricher - Map Columns</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+           background: #f0f2f5; min-height: 100vh; }
+    .nav { background: #1a1a2e; color: #fff; padding: 14px 24px; display: flex;
+           align-items: center; justify-content: space-between; font-size: 14px; }
+    .nav a { color: #a0aec0; text-decoration: none; margin-left: 20px; }
+    .nav a:hover { color: #fff; }
+    .container { max-width: 960px; margin: 30px auto; padding: 0 20px; }
+    .card { background: #fff; border-radius: 12px; padding: 32px 40px;
+            box-shadow: 0 2px 12px rgba(0,0,0,.08); margin-bottom: 20px; }
+    h1 { font-size: 22px; margin-bottom: 8px; }
+    p.sub { color: #666; font-size: 14px; margin-bottom: 20px; }
+    .flash { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
+    .flash.success { background: #d4edda; color: #155724; }
+    .flash.error { background: #f8d7da; color: #721c24; }
+    .grid { display: grid; grid-template-columns: 1fr 2fr; gap: 0;
+            border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; margin-bottom: 20px; }
+    .grid-header { display: contents; }
+    .grid-header > div { padding: 10px 14px; font-weight: 600; font-size: 13px;
+                         background: #f8f9fa; border-bottom: 1px solid #e0e0e0;
+                         color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
+    .grid-row { display: contents; }
+    .grid-row > div { padding: 12px 14px; border-bottom: 1px solid #f0f0f0;
+                      font-size: 13px; vertical-align: middle; }
+    .grid-row:last-child > div { border-bottom: none; }
+    .grid-row:nth-child(even) > div { background: #fafbfc; }
+    .col-name { font-weight: 500; color: #1a1a2e; word-break: break-all; }
+    .col-index { color: #999; font-size: 11px; margin-left: 6px; }
+    .col-preview { color: #666; }
+    .field-list { display: flex; flex-direction: column; gap: 6px; }
+    .field-item { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+    .field-item label { flex: 0 0 220px; font-size: 13px; font-weight: 500; color: #333; }
+    .field-item select { flex: 1; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px;
+                         font-size: 13px; background: #fff; cursor: pointer; }
+    .field-item select:focus { border-color: #1a1a2e; outline: none; box-shadow: 0 0 0 2px rgba(26,26,46,.1); }
+    .field-item .required { color: #dc3545; font-size: 16px; margin-left: -4px; }
+    .field-item .hint { font-size: 11px; color: #999; flex: 0 0 260px; }
+    .btn { padding: 12px 36px; border: none; border-radius: 6px; font-size: 15px;
+           cursor: pointer; font-weight: 600; }
+    .btn-primary { background: #1a1a2e; color: #fff; }
+    .btn-primary:hover { background: #16213e; }
+    .btn-primary:disabled { background: #999; cursor: not-allowed; }
+    .actions { text-align: center; margin-top: 20px; }
+    .footer { text-align: center; font-size: 12px; color: #999; margin-top: 20px; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px;
+             font-weight: 600; }
+    .badge-required { background: #fce4ec; color: #c62828; }
+    .badge-optional { background: #e3f2fd; color: #1565c0; }
+  </style>
+</head>
+<body>
+  <div class="nav">
+    <span><strong>CSV Enricher</strong></span>
+    <span><a href="{{ url_for('upload') }}">Upload New File</a></span>
+  </div>
+  <div class="container">
+    <div class="card">
+      <h1>Map CSV Columns</h1>
+      <p class="sub">Match your CSV columns to the expected fields below. The <strong>Account: Account Name</strong> field is required — everything else is optional but recommended.</p>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for cat, msg in messages %}
+          <div class="flash {{ cat }}">{{ msg }}</div>
+        {% endfor %}
+      {% endwith %}
+
+      <h2 style="font-size:16px;margin-bottom:10px;">Your CSV Columns</h2>
+      <div class="grid">
+        <div class="grid-header"><div>Column Name</div><div>Preview (first 5 rows)</div></div>
+        {% for col in header %}
+        <div class="grid-row">
+          <div class="col-name">{{ col }} <span class="col-index">#{{ loop.index0 }}</span></div>
+          <div class="col-preview">
+            {% set seen = [] %}
+            {% for r in rows %}
+              {% if loop.index0 < 5 and r[loop.index0] and r[loop.index0] not in seen %}
+                {{ r[loop.index0] }}{% if not loop.last %}, {% endif %}
+                {% set _ = seen.append(r[loop.index0]) %}
+              {% endif %}
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      <h2 style="font-size:16px;margin-bottom:10px;">Column Mapping</h2>
+      <form method="POST" id="mapping-form">
+        <div class="field-list">
+          {% for field in expected_fields %}
+          <div class="field-item">
+            <label for="col_{{ field.id }}">
+              {% if field.required %}<span class="required">*</span>{% endif %}
+              {{ field.label }}
+              <span class="badge {% if field.required %}badge-required{% else %}badge-optional{% endif %}">
+                {{ 'Required' if field.required else 'Optional' }}
+              </span>
+            </label>
+            <select name="col_{{ field.id }}" id="col_{{ field.id }}">
+              <option value="__none__">— Skip —</option>
+              {% for col in header %}
+              <option value="{{ loop.index0 }}"
+                {% if mapping.get(field.id) == loop.index0 %}selected{% endif %}>
+                [{{ loop.index0 }}] {{ col }}
+              </option>
+              {% endfor %}
+            </select>
+            <span class="hint">{{ field.desc }}</span>
+          </div>
+          {% endfor %}
+        </div>
+
+        <div class="actions">
+          <button type="submit" class="btn btn-primary" id="start-btn">
+            Start Processing
+          </button>
+        </div>
+      </form>
+    </div>
+    <div class="footer">All data stays on your server. Processed files are automatically deleted on restart.</div>
+  </div>
+
+  <script>
+    document.getElementById('mapping-form').addEventListener('submit', function(e) {
+      const company = document.getElementById('col_company').value;
+      if (!company || company === '__none__') {
+        e.preventDefault();
+        alert('Account: Account Name is required. Please map it to a column before proceeding.');
+        return;
+      }
+      document.getElementById('start-btn').disabled = true;
+      document.getElementById('start-btn').textContent = 'Starting...';
+    });
+  </script>
+</body>
+</html>
