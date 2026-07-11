@@ -56,19 +56,28 @@
 
     <div class="divider">or sign in with password</div>
 
-    <form method="POST">
+    <form method="POST" id="login-form">
       <label for="username">Username</label>
       <input type="text" name="username" id="username" autofocus>
       <label for="password">Password</label>
       <input type="password" name="password" id="password">
-      {% if recaptcha_site_key %}
-      <div class="g-recaptcha" data-sitekey="{{ recaptcha_site_key }}" style="margin-bottom:16px;"></div>
-      {% endif %}
+      <input type="hidden" name="g-recaptcha-response" id="recaptcha-token">
       <button type="submit" class="btn btn-primary">Sign In</button>
     </form>
   </div>
   {% if recaptcha_site_key %}
-  <script src="https://www.google.com/recaptcha/api.js" async defer></script>
+  <script src="https://www.google.com/recaptcha/api.js?render={{ recaptcha_site_key }}"></script>
+  <script>
+    document.getElementById('login-form').addEventListener('submit', function(e) {
+      e.preventDefault();
+      grecaptcha.ready(function() {
+        grecaptcha.execute('{{ recaptcha_site_key }}', {action: 'login'}).then(function(token) {
+          document.getElementById('recaptcha-token').value = token;
+          document.getElementById('login-form').submit();
+        });
+      });
+    });
+  </script>
   {% endif %}
 </body>
 </html>

@@ -94,22 +94,28 @@ def login():
         if site_key and secret_key:
             token = request.form.get('g-recaptcha-response', '')
             if not token:
-                error = 'Please complete the CAPTCHA'
+                error = 'Security verification failed. Please try again.'
             else:
                 resp = requests.post(
                     'https://www.google.com/recaptcha/api/siteverify',
                     data={'secret': secret_key, 'response': token},
                     timeout=10,
                 )
-                if not resp.json().get('success'):
-                    error = 'CAPTCHA verification failed. Try again.'
+                result = resp.json()
+                if not result.get('success') or result.get('score', 0) < 0.5:
+                    error = 'Security verification failed. Please try again.'
 
-        if not error and username in users and users[username]['password'] == password:
-            session['user'] = username
-            flash('Logged in', 'success')
-            return redirect(url_for('upload'))
         if not error:
-            error = 'Invalid credentials'
+            if username in users and users[username]['password'] == password:
+                session['user'] = username
+                flash('Logged in', 'success')
+                return redirect(url_for('upload'))
+            else:
+                error = 'Invalid credentials'
+
+        if error:
+            flash(error, 'error')
+
     return render_template('login.html',
         recaptcha_site_key=session.get('recaptcha_site_key', RECAPTCHA_SITE_KEY))
 
