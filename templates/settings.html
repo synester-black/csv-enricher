@@ -93,6 +93,17 @@
       </div>
 
       <div class="card">
+        <h2>reCAPTCHA <span class="badge">Optional</span></h2>
+        <p style="font-size:13px;color:#666;margin-bottom:12px;">Protect the login form with Google reCAPTCHA v2. Get keys at <a href="https://www.google.com/recaptcha/admin" target="_blank" style="color:#1a1a2e;">google.com/recaptcha/admin</a>.</p>
+        <label for="recaptcha_site_key">Site Key</label>
+        <input type="text" name="recaptcha_site_key" id="recaptcha_site_key"
+               value="{{ recaptcha_site_key }}" placeholder="6Lc...">
+        <label for="recaptcha_secret_key">Secret Key</label>
+        <input type="password" name="recaptcha_secret_key" id="recaptcha_secret_key"
+               value="{{ recaptcha_secret_key }}" placeholder="6Lc...">
+      </div>
+
+      <div class="card">
         <h2>Prompts <span class="badge">Customise</span></h2>
 
         <label for="software_prompt">Software Research Prompt</label>

@@ -40,6 +40,10 @@ MICROSOFT_CLIENT_SECRET = os.environ.get('MICROSOFT_CLIENT_SECRET', '')
 MICROSOFT_TENANT_ID = os.environ.get('MICROSOFT_TENANT_ID', '')
 MICROSOFT_ALLOWED_DOMAIN = os.environ.get('MICROSOFT_ALLOWED_DOMAIN', '')
 
+# reCAPTCHA defaults
+RECAPTCHA_SITE_KEY = os.environ.get('RECAPTCHA_SITE_KEY', '')
+RECAPTCHA_SECRET_KEY = os.environ.get('RECAPTCHA_SECRET_KEY', '')
+
 # ---------------------------------------------------------------------------
 # In-memory stores
 # ---------------------------------------------------------------------------
@@ -78,16 +82,36 @@ def login_required(f):
 # ---------------------------------------------------------------------------
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    error = None
     if request.method == 'POST':
         users = load_users()
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
-        if username in users and users[username]['password'] == password:
+
+        # Verify reCAPTCHA if configured
+        site_key = session.get('recaptcha_site_key', RECAPTCHA_SITE_KEY)
+        secret_key = session.get('recaptcha_secret_key', RECAPTCHA_SECRET_KEY)
+        if site_key and secret_key:
+            token = request.form.get('g-recaptcha-response', '')
+            if not token:
+                error = 'Please complete the CAPTCHA'
+            else:
+                resp = requests.post(
+                    'https://www.google.com/recaptcha/api/siteverify',
+                    data={'secret': secret_key, 'response': token},
+                    timeout=10,
+                )
+                if not resp.json().get('success'):
+                    error = 'CAPTCHA verification failed. Try again.'
+
+        if not error and username in users and users[username]['password'] == password:
             session['user'] = username
             flash('Logged in', 'success')
             return redirect(url_for('upload'))
-        flash('Invalid credentials', 'error')
-    return render_template('login.html')
+        if not error:
+            error = 'Invalid credentials'
+    return render_template('login.html',
+        recaptcha_site_key=session.get('recaptcha_site_key', RECAPTCHA_SITE_KEY))
 
 @app.route('/logout')
 def logout():
@@ -112,6 +136,8 @@ def settings():
         session['software_prompt'] = request.form.get('software_prompt', '')
         session['intent_prompt'] = request.form.get('intent_prompt', '')
         session['tier_prompt'] = request.form.get('tier_prompt', '')
+        session['recaptcha_site_key'] = request.form.get('recaptcha_site_key', '')
+        session['recaptcha_secret_key'] = request.form.get('recaptcha_secret_key', '')
         flash('Settings saved', 'success')
         _init_microsoft_oauth()  # Re-init with new values
         return redirect(url_for('upload'))
@@ -127,7 +153,9 @@ def settings():
         microsoft_tenant_id=session.get('microsoft_tenant_id', MICROSOFT_TENANT_ID),
         microsoft_allowed_domain=session.get('microsoft_allowed_domain', MICROSOFT_ALLOWED_DOMAIN),
         app_url=session.get('app_url', ''),
-        software_prompt=sp, intent_prompt=ip, tier_prompt=tp)
+        software_prompt=sp, intent_prompt=ip, tier_prompt=tp,
+        recaptcha_site_key=session.get('recaptcha_site_key', RECAPTCHA_SITE_KEY),
+        recaptcha_secret_key=session.get('recaptcha_secret_key', RECAPTCHA_SECRET_KEY))
 
 # ---------------------------------------------------------------------------
 # Routes – Upload
