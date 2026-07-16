@@ -104,6 +104,16 @@
       </div>
 
       <div class="card">
+        <h2>Validation Region <span class="badge">ICP Target</span></h2>
+        <p style="font-size:13px;color:#666;margin-bottom:12px;">Controls phone format, country validation, and location checks during lead processing.</p>
+        <select name="validation_region" id="validation_region" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;margin-bottom:14px;">
+          {% for key, cfg in regions.items() %}
+          <option value="{{ key }}" {% if validation_region == key %}selected{% endif %}>{{ cfg.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="card">
         <h2>Prompts <span class="badge">Customise</span></h2>
 
         <label for="software_prompt">Software Research Prompt</label>
