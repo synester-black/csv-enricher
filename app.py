@@ -144,7 +144,7 @@ def settings():
         session['tier_prompt'] = request.form.get('tier_prompt', '')
         session['recaptcha_site_key'] = request.form.get('recaptcha_site_key', '')
         session['recaptcha_secret_key'] = request.form.get('recaptcha_secret_key', '')
-        session['validation_region'] = request.form.get('validation_region', 'uk')
+        session['validation_regions'] = ','.join(request.form.getlist('validation_regions')) or 'uk'
         flash('Settings saved', 'success')
         _init_microsoft_oauth()  # Re-init with new values
         return redirect(url_for('upload'))
@@ -163,7 +163,7 @@ def settings():
         software_prompt=sp, intent_prompt=ip, tier_prompt=tp,
         recaptcha_site_key=session.get('recaptcha_site_key', RECAPTCHA_SITE_KEY),
         recaptcha_secret_key=session.get('recaptcha_secret_key', RECAPTCHA_SECRET_KEY),
-        validation_region=session.get('validation_region', 'uk'),
+        validation_regions=session.get('validation_regions', 'uk'),
         regions=REGIONS)
 
 # ---------------------------------------------------------------------------
@@ -286,7 +286,7 @@ def mapping(task_id):
             'software_prompt': session.get('software_prompt', SOFTWARE_PROMPT),
             'intent_prompt': session.get('intent_prompt', INTENT_PROMPT),
             'tier_prompt': session.get('tier_prompt', TIER_PROMPT),
-            'validation_region': session.get('validation_region', 'uk'),
+            'validation_regions': session.get('validation_regions', 'uk'),
         }
 
         threading.Thread(
@@ -766,22 +766,29 @@ def normalize_name(s):
     s = unicodedata.normalize('NFKD', str(s))
     return s.encode('ascii', 'ignore').decode('ascii')
 
-def normalize_phone(val, region='uk'):
+def normalize_phone(val, regions=None):
     if not val:
         return None
-    cfg = REGIONS.get(region, REGIONS['uk'])
+    if regions is None:
+        regions = ['uk']
+    if isinstance(regions, str):
+        regions = [regions]
     v = str(val).strip().replace(' ', '').replace('-','').replace('(','').replace(')','')
-    if cfg['phone_prefix'] and v.startswith(cfg['phone_prefix']):
-        return cfg['phone_prefix'] + v[len(cfg['phone_prefix']):]
-    # Generic detection: if it already has a country code, keep it
+
+    # Try each selected region
+    for r in regions:
+        cfg = REGIONS.get(r, REGIONS['uk'])
+        if cfg['phone_prefix'] and v.startswith(cfg['phone_prefix']):
+            return cfg['phone_prefix'] + v[len(cfg['phone_prefix']):]
+        for cc in cfg['country_codes']:
+            if v.startswith(cc) and len(v) >= len(cc) + 6:
+                return '+' + v
+            if v.startswith('0') and cc in ('44',):
+                return '+44' + v[1:]
+
+    # If already has +, preserve it
     if v.startswith('+'):
         return v
-    # Try region-specific bare numbers
-    for cc in cfg['country_codes']:
-        if v.startswith(cc) and len(v) >= len(cc) + 6:
-            return '+' + v
-        if v.startswith('0') and cc in ('44',):
-            return '+44' + v[1:]
     return None
 
 def classify_tier_deterministic(title):
@@ -841,11 +848,15 @@ def get_company_domain(company):
     slug = company.lower().replace(' ', '').replace("'", '').replace('&', 'and')
     return f'{slug}.com'
 
-def validate_row_deterministic(row_dict, region='uk'):
+def validate_row_deterministic(row_dict, regions=None):
     """Run Prompt 3 logic deterministically (much faster than LLM)."""
+    if regions is None:
+        regions = ['uk']
+    if isinstance(regions, str):
+        regions = [regions]
+
     issues = []
     to_remove = []
-    region_cfg = REGIONS.get(region, REGIONS['uk'])
 
     first = row_dict.get('first_name', '').strip()
     last = row_dict.get('last_name', '').strip()
@@ -877,14 +888,27 @@ def validate_row_deterministic(row_dict, region='uk'):
     else:
         issues.append('Missing email')
 
-    # Phone
-    mob_clean = normalize_phone(mobile, region)
-    mob_other_clean = normalize_phone(mobile_other, region)
+    # Phone — try each region until one matches
+    mob_clean = normalize_phone(mobile, regions)
+    mob_other_clean = normalize_phone(mobile_other, regions)
 
-    # Country
-    if region_cfg['country_issue']:
-        if country and country.lower() not in region_cfg['valid_countries']:
-            issues.append(region_cfg['country_issue'])
+    # Country — valid if it matches ANY selected region
+    country_issues = []
+    if country:
+        country_lower = country.lower()
+        matched = False
+        for r in regions:
+            rc = REGIONS.get(r, REGIONS['uk'])
+            if rc['country_issue'] and country_lower in rc['valid_countries']:
+                matched = True
+                break
+            if not rc['country_issue']:  # global / no check
+                matched = True
+                break
+        if not matched:
+            # Use the first region's issue label
+            first_rc = REGIONS.get(regions[0], REGIONS['uk'])
+            country_issues.append(first_rc['country_issue'])
 
     # ICP check
     icp_kw = ['finance','fp&a','financial planning','commercial finance','business intelligence',
@@ -906,7 +930,7 @@ def validate_row_deterministic(row_dict, region='uk'):
         issues.append('Missing first/last name')
 
     # Collect all removal reasons
-    all_issues = list(dict.fromkeys(issues + to_remove))  # deduplicate preserving order
+    all_issues = list(dict.fromkeys(issues + to_remove + country_issues))  # deduplicate preserving order
     return {
         'first_name_clean': first_clean,
         'last_name_clean': last_clean,
@@ -945,13 +969,13 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None):
             'software_prompt': SOFTWARE_PROMPT,
             'intent_prompt': INTENT_PROMPT,
             'tier_prompt': TIER_PROMPT,
-            'validation_region': 'uk',
+            'validation_regions': 'uk',
         }
 
     software_prompt_tpl = ollama_cfg.get('software_prompt', SOFTWARE_PROMPT)
     intent_prompt_tpl = ollama_cfg.get('intent_prompt', INTENT_PROMPT)
     tier_prompt_tpl = ollama_cfg.get('tier_prompt', TIER_PROMPT)
-    validation_region = ollama_cfg.get('validation_region', 'uk')
+    validation_regions = [r.strip() for r in ollama_cfg.get('validation_regions', 'uk').split(',') if r.strip()]
 
     try:
         # Read input CSV
@@ -1129,7 +1153,7 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None):
                 'company': company,
                 'country': row[col_map.get('country', 0)] if col_map.get('country', 0) < len(row) else '',
             }
-            v_result = validate_row_deterministic(rd, validation_region)
+            v_result = validate_row_deterministic(rd, validation_regions)
 
             # Use LLM-classified tier when available, fall back to deterministic
             title_val = rd.get('title', '')

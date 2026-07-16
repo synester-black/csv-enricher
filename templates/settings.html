@@ -104,13 +104,17 @@
       </div>
 
       <div class="card">
-        <h2>Validation Region <span class="badge">ICP Target</span></h2>
-        <p style="font-size:13px;color:#666;margin-bottom:12px;">Controls phone format, country validation, and location checks during lead processing.</p>
-        <select name="validation_region" id="validation_region" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;margin-bottom:14px;">
+        <h2>Validation Regions <span class="badge">ICP Target</span></h2>
+        <p style="font-size:13px;color:#666;margin-bottom:12px;">Select one or more target regions. A lead passes location checks if it matches ANY selected region. Phone formats from all selected regions are accepted.</p>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
           {% for key, cfg in regions.items() %}
-          <option value="{{ key }}" {% if validation_region == key %}selected{% endif %}>{{ cfg.label }}</option>
+          <label style="display:flex;align-items:center;gap:10px;font-size:14px;cursor:pointer;font-weight:400;">
+            <input type="checkbox" name="validation_regions" value="{{ key }}"
+              {% if key in validation_regions.split(',') %}checked{% endif %}>
+            {{ cfg.label }}
+          </label>
           {% endfor %}
-        </select>
+        </div>
       </div>
 
       <div class="card">
