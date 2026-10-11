@@ -56,3 +56,10 @@ SALESFORCE_USERNAME = os.environ.get('SALESFORCE_USERNAME', '')
 SALESFORCE_PASSWORD = os.environ.get('SALESFORCE_PASSWORD', '')
 SALESFORCE_SECURITY_TOKEN = os.environ.get('SALESFORCE_SECURITY_TOKEN', '')
 SALESFORCE_DOMAIN = os.environ.get('SALESFORCE_DOMAIN', 'login')
+
+# --- S3-compatible object storage (uploads / processed files) ---
+AWS_ENDPOINT_URL_S3 = os.environ.get('AWS_ENDPOINT_URL_S3', '')
+AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID', '')
+AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
+AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
+S3_BUCKET = os.environ.get('S3_BUCKET', 'csv-upload')

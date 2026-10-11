@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Upload History — Vicit Data Intelligence{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div><h1>Upload History</h1><p>Every enrichment run with status, logs and stored files.</p></div>
+    <a class="btn btn-accent" href="{{ url_for('upload') }}">New Upload</a>
+  </div>
+
+  {% if uploads %}
+  <div class="card">
+    <div class="table-wrap">
+      <table>
+        <tr><th>File</th><th>Status</th><th>Rows</th><th>Companies</th><th>Owner</th><th>Started</th><th>Finished</th><th></th></tr>
+        {% for u in uploads %}
+        <tr>
+          <td><a class="cell" href="{{ url_for('history_detail', upload_id=u.id) }}">{{ u.filename or 'file' }}</a>
+            <div style="color:var(--muted);font-size:12px;">{{ u.file_format or '' }}</div></td>
+          <td><span class="pill src-{{ 'db' if u.status=='complete' else ('model' if u.status=='running' else 'mixed') }}">{{ u.status or 'pending' }}</span></td>
+          <td>{{ u.row_count or 0 }}</td>
+          <td>{{ u.total_companies or '' }}</td>
+          <td>{{ u.owner or '' }}</td>
+          <td style="font-size:12px;color:var(--muted);">{{ u.started_at.strftime('%Y-%m-%d %H:%M') if u.started_at else '' }}</td>
+          <td style="font-size:12px;color:var(--muted);">{{ u.finished_at.strftime('%Y-%m-%d %H:%M') if u.finished_at else '' }}</td>
+          <td>
+            {% if u.status == 'running' %}<a class="cell" href="{{ url_for('progress', task_id=u.id) }}">View live</a>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="card"><p style="color:var(--muted);">No uploads yet. <a class="cell" href="{{ url_for('upload') }}">Upload a file</a> to get started.</p></div>
+  {% endif %}
+{% endblock %}

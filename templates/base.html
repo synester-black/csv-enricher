@@ -17,6 +17,7 @@
       <div class="nav-links">
         {% if session.user %}
           <a href="{{ url_for('search') }}" class="{{ 'active' if active == 'search' }}">Search</a>
+          <a href="{{ url_for('history') }}" class="{{ 'active' if active == 'history' }}">History</a>
         {% endif %}
         {% if session.role == 'admin' %}
           <a href="{{ url_for('upload') }}" class="{{ 'active' if active == 'enrich' }}">Enrich</a>
@@ -27,6 +28,10 @@
       </div>
       <div class="nav-right">
         {% if session.user %}
+          <a href="{{ url_for('notifications') }}" title="Notifications" style="position:relative;color:#cdd7ea;font-size:18px;">
+            &#128276;
+            {% if unread_notifications %}<span style="position:absolute;top:-8px;right:-10px;background:var(--grad-accent);color:#fff;font-size:10px;font-weight:700;border-radius:10px;padding:1px 6px;">{{ unread_notifications }}</span>{% endif %}
+          </a>
           <span class="user-chip">
             <span class="avatar">{{ (session.name or session.user)[0]|upper }}</span>
             {{ session.name or session.user }}

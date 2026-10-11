@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Notifications — Vicit Data Intelligence{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div><h1>Notifications</h1><p>Enrichment start / finish and other activity.</p></div>
+  </div>
+  <div class="card">
+    {% for n in items %}
+    <div style="display:flex;gap:12px;align-items:flex-start;padding:14px 0;border-bottom:1px solid var(--line);">
+      <span style="font-size:20px;">{{ '✅' if n.kind=='complete' else ('⚠️' if n.kind=='error' else '🚀') }}</span>
+      <div style="flex:1;">
+        <div style="font-weight:600;">{{ n.message }}</div>
+        <div style="color:var(--muted);font-size:12px;">
+          {{ n.created_at.strftime('%Y-%m-%d %H:%M') if n.created_at else '' }}
+          {% if n.upload_id %} &middot; <a class="cell" href="{{ url_for('history_detail', upload_id=n.upload_id) }}">view</a>{% endif %}
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <p style="color:var(--muted);">No notifications yet.</p>
+    {% endfor %}
+  </div>
+{% endblock %}

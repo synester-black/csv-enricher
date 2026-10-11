@@ -183,6 +183,26 @@ CREATE TABLE IF NOT EXISTS uploads (
     uploaded_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS upload_events (
+    id         BIGSERIAL PRIMARY KEY,
+    upload_id  UUID REFERENCES uploads(id) ON DELETE CASCADE,
+    ts         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    level      TEXT,
+    message    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_upload_events_upload ON upload_events (upload_id);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id         BIGSERIAL PRIMARY KEY,
+    username   TEXT,
+    upload_id  UUID,
+    kind       TEXT,
+    message    TEXT,
+    read       BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications (username);
+
 CREATE TABLE IF NOT EXISTS records (
     id                 BIGSERIAL PRIMARY KEY,
     upload_id          UUID REFERENCES uploads(id) ON DELETE CASCADE,
@@ -223,6 +243,18 @@ ALTER TABLE companies ADD COLUMN IF NOT EXISTS intent_data TEXT;
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS contact_titles TEXT;
 ALTER TABLE companies DROP COLUMN IF EXISTS software;
 ALTER TABLE companies DROP COLUMN IF EXISTS intent;
+
+-- Upload tracking / history columns
+ALTER TABLE uploads ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending';
+ALTER TABLE uploads ADD COLUMN IF NOT EXISTS owner TEXT;
+ALTER TABLE uploads ADD COLUMN IF NOT EXISTS input_key TEXT;
+ALTER TABLE uploads ADD COLUMN IF NOT EXISTS output_key TEXT;
+ALTER TABLE uploads ADD COLUMN IF NOT EXISTS template_key TEXT;
+ALTER TABLE uploads ADD COLUMN IF NOT EXISTS total_companies INTEGER;
+ALTER TABLE uploads ADD COLUMN IF NOT EXISTS progress JSONB;
+ALTER TABLE uploads ADD COLUMN IF NOT EXISTS error TEXT;
+ALTER TABLE uploads ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
+ALTER TABLE uploads ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ;
 """
 
 
@@ -344,19 +376,133 @@ def lookup_companies(normalized_names=None, domains=None):
 # ---------------------------------------------------------------------------
 # Uploads / records
 # ---------------------------------------------------------------------------
-def create_upload(upload_id, filename, file_format, header, row_count, column_map=None):
+def create_upload(upload_id, filename, file_format, header, row_count,
+                  column_map=None, owner=None, input_key=None):
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            """INSERT INTO uploads (id, filename, file_format, original_header, column_map, row_count)
-               VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, %s)
-               ON CONFLICT (id) DO NOTHING""",
+            """INSERT INTO uploads (id, filename, file_format, original_header, column_map,
+                                    row_count, owner, input_key, status)
+               VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s, 'pending')
+               ON CONFLICT (id) DO UPDATE SET
+                 filename=EXCLUDED.filename, file_format=EXCLUDED.file_format,
+                 original_header=EXCLUDED.original_header, column_map=EXCLUDED.column_map,
+                 row_count=EXCLUDED.row_count,
+                 owner=COALESCE(EXCLUDED.owner, uploads.owner),
+                 input_key=COALESCE(EXCLUDED.input_key, uploads.input_key)""",
             (
                 str(upload_id), filename, file_format,
                 json.dumps(header or []),
                 json.dumps(column_map or {}),
                 row_count or 0,
+                owner, input_key,
             ),
         )
+
+
+def set_upload_status(upload_id, status=None, progress=None, error=None,
+                      total_companies=None, output_key=None, template_key=None,
+                      started=False, finished=False):
+    sets, params = [], []
+    if status is not None:
+        sets.append('status = %s'); params.append(status)
+    if progress is not None:
+        sets.append('progress = %s::jsonb'); params.append(json.dumps(progress))
+    if error is not None:
+        sets.append('error = %s'); params.append(error)
+    if total_companies is not None:
+        sets.append('total_companies = %s'); params.append(total_companies)
+    if output_key is not None:
+        sets.append('output_key = %s'); params.append(output_key)
+    if template_key is not None:
+        sets.append('template_key = %s'); params.append(template_key)
+    if started:
+        sets.append('started_at = COALESCE(started_at, now())')
+    if finished:
+        sets.append('finished_at = now()')
+    if not sets:
+        return
+    params.append(str(upload_id))
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(f'UPDATE uploads SET {", ".join(sets)} WHERE id = %s', params)
+
+
+def log_event(upload_id, message, level='info'):
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                'INSERT INTO upload_events (upload_id, level, message) VALUES (%s, %s, %s)',
+                (str(upload_id), level, message),
+            )
+    except Exception as e:
+        print(f'log_event warning: {e}')
+
+
+def get_upload(upload_id):
+    with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute('SELECT * FROM uploads WHERE id = %s', (str(upload_id),))
+        r = cur.fetchone()
+        return dict(r) if r else None
+
+
+def list_uploads(owner=None, limit=100):
+    with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        if owner:
+            cur.execute('SELECT * FROM uploads WHERE owner = %s ORDER BY uploaded_at DESC LIMIT %s',
+                        (owner, limit))
+        else:
+            cur.execute('SELECT * FROM uploads ORDER BY uploaded_at DESC LIMIT %s', (limit,))
+        return [dict(r) for r in cur.fetchall()]
+
+
+def get_events(upload_id, limit=300):
+    with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute('SELECT ts, level, message FROM upload_events WHERE upload_id = %s '
+                    'ORDER BY id DESC LIMIT %s', (str(upload_id), limit))
+        return [dict(r) for r in reversed(cur.fetchall())]
+
+
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
+def add_notification(username, upload_id, kind, message):
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                'INSERT INTO notifications (username, upload_id, kind, message) '
+                'VALUES (%s, %s, %s, %s)',
+                (username, str(upload_id) if upload_id else None, kind, message),
+            )
+    except Exception as e:
+        print(f'notification warning: {e}')
+
+
+def list_notifications(username, unread_only=False, limit=50):
+    with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        q = 'SELECT * FROM notifications WHERE username = %s'
+        if unread_only:
+            q += ' AND read = false'
+        q += ' ORDER BY id DESC LIMIT %s'
+        cur.execute(q, (username, limit))
+        return [dict(r) for r in cur.fetchall()]
+
+
+def unread_notification_count(username):
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute('SELECT count(*) FROM notifications WHERE username = %s AND read = false',
+                        (username,))
+            return cur.fetchone()[0]
+    except Exception:
+        return 0
+
+
+def mark_notifications_read(username, upload_id=None):
+    with get_conn() as conn, conn.cursor() as cur:
+        if upload_id:
+            cur.execute('UPDATE notifications SET read = true WHERE username = %s AND upload_id = %s',
+                        (username, str(upload_id)))
+        else:
+            cur.execute('UPDATE notifications SET read = true WHERE username = %s', (username,))
 
 
 def save_records(upload_id, records):

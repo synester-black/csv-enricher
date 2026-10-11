@@ -30,6 +30,8 @@ from tabular import SUPPORTED_EXTENSIONS, read_tabular
 from template_exporter import build_template_row, write_template_xlsx
 from werkzeug.security import check_password_hash, generate_password_hash
 
+import storage
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -340,6 +342,27 @@ def handle_upload():
         flash('File is empty', 'error')
         return redirect(url_for('upload'))
     preview_rows = rows[:5]
+
+    # Persist the raw upload to S3-compatible storage (best effort).
+    input_key = None
+    if storage.enabled():
+        try:
+            input_key = f'uploads/{task_id}/input{ext}'
+            storage.upload_file(in_path, input_key,
+                                content_type='text/csv' if ext == '.csv'
+                                else 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        except Exception as e:
+            print(f'S3 upload warning: {e}')
+            input_key = None
+
+    # Create the history record
+    try:
+        dbstore.create_upload(task_id, f.filename, ext.lstrip('.').upper(),
+                              header, len(rows), None, session.get('user'), input_key)
+        dbstore.log_event(task_id, f'Uploaded {f.filename} ({len(rows)} rows)')
+    except Exception as e:
+        print(f'create_upload warning: {e}')
+
     # Store preview for mapping page
     csv_previews[task_id] = {
         'header': header,
@@ -347,6 +370,7 @@ def handle_upload():
         'filepath': str(in_path),
         'filename': f.filename,
         'file_format': ext.lstrip('.').upper(),
+        'input_key': input_key,
     }
 
     return redirect(url_for('mapping', task_id=task_id))
@@ -427,10 +451,19 @@ def mapping(task_id):
             'icp_titles': session.get('icp_titles', []),
         }
 
+        # Mark the upload as running and notify
+        try:
+            dbstore.set_upload_status(task_id, status='running', started=True)
+            dbstore.log_event(task_id, 'Processing started')
+            dbstore.add_notification(session.get('user', 'admin'), task_id, 'started',
+                                     f'Enrichment started for {preview.get("filename") or "file"}')
+        except Exception as e:
+            print(f'status warning: {e}')
+
         threading.Thread(
             target=process_csv,
             args=(task_id, preview['filepath'], ollama_cfg, mapping, preview.get('filename'),
-                  preview.get('file_format'), preview.get('header')),
+                  preview.get('file_format'), preview.get('header'), session.get('user')),
             daemon=True,
         ).start()
 
@@ -476,7 +509,7 @@ def _auto_detect_column(field_id, header):
 @app.route('/progress/<task_id>')
 @login_required
 def progress(task_id):
-    if task_id not in processing_status:
+    if task_id not in processing_status and not dbstore.get_upload(task_id):
         flash('Task not found', 'error')
         return redirect(url_for('upload'))
     return render_template('processing.html', task_id=task_id)
@@ -486,40 +519,55 @@ def progress(task_id):
 def api_status(task_id):
     status = processing_status.get(task_id)
     if not status:
-        return jsonify({'error': 'not found'}), 404
+        # Fall back to the persisted progress (survives worker/restart)
+        up = dbstore.get_upload(task_id)
+        if up and up.get('progress'):
+            status = up['progress']
+        elif up:
+            status = {'state': up.get('status', 'unknown'),
+                      'error': up.get('error') or '', 'progress_pct': 100 if up.get('status') == 'complete' else 0,
+                      'total_companies': up.get('total_companies') or 0}
+        else:
+            return jsonify({'error': 'not found'}), 404
     return jsonify(status)
 
 # ---------------------------------------------------------------------------
 # Routes – Download
 # ---------------------------------------------------------------------------
+def _serve_or_redirect(local_path, storage_key, download_name, mimetype):
+    if local_path and os.path.exists(local_path):
+        return send_file(local_path, as_attachment=True,
+                         download_name=download_name, mimetype=mimetype)
+    if storage_key and storage.enabled():
+        url = storage.presigned_url(storage_key)
+        if url:
+            return redirect(url)
+    return None
+
+
 @app.route('/download/<task_id>')
 @login_required
 def download(task_id):
-    out_path = results_store.get(task_id)
-    if not out_path or not os.path.exists(out_path):
-        flash('Result not ready or expired', 'error')
-        return redirect(url_for('upload'))
-    return send_file(
-        out_path,
-        as_attachment=True,
-        download_name='enriched_leads.csv',
-        mimetype='text/csv',
-    )
+    up = dbstore.get_upload(task_id) or {}
+    resp = _serve_or_redirect(results_store.get(task_id), up.get('output_key'),
+                              'enriched_leads.csv', 'text/csv')
+    if resp:
+        return resp
+    flash('Result not ready or expired', 'error')
+    return redirect(url_for('upload'))
 
 
 @app.route('/download/template/<task_id>')
 @login_required
 def download_template(task_id):
-    out_path = template_store.get(task_id)
-    if not out_path or not os.path.exists(out_path):
-        flash('Template export not ready or expired', 'error')
-        return redirect(url_for('upload'))
-    return send_file(
-        out_path,
-        as_attachment=True,
-        download_name='data_request.xlsx',
-        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    )
+    up = dbstore.get_upload(task_id) or {}
+    resp = _serve_or_redirect(template_store.get(task_id), up.get('template_key'),
+                              'data_request.xlsx',
+                              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    if resp:
+        return resp
+    flash('Template export not ready or expired', 'error')
+    return redirect(url_for('upload'))
 
 # ---------------------------------------------------------------------------
 # Ollama helpers
@@ -1172,8 +1220,24 @@ def _parse_intent(s):
         return {}
 
 
+_last_persist = {}
+
+
+def _publish(task_id, status, force=False):
+    """Keep the in-memory status fresh and persist it to the DB (throttled)."""
+    processing_status[task_id] = status
+    now = time.time()
+    if not force and now - _last_persist.get(task_id, 0) < 2:
+        return
+    _last_persist[task_id] = now
+    try:
+        dbstore.set_upload_status(task_id, progress=status)
+    except Exception:
+        pass
+
+
 def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
-                filename=None, file_format=None, upload_header=None):
+                filename=None, file_format=None, upload_header=None, owner=None):
     status = {
         'state': 'starting',
         'total_companies': 0,
@@ -1188,7 +1252,7 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
         'error': '',
         'progress_pct': 0,
     }
-    processing_status[task_id] = status
+    _publish(task_id, status)
 
     if ollama_cfg is None:
         ollama_cfg = {
@@ -1268,6 +1332,10 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
         unique_companies = list(companies.keys())
         status['total_companies'] = len(unique_companies)
         status['state'] = 'processing'
+        try:
+            dbstore.log_event(task_id, f'Read {len(rows)} rows across {len(unique_companies)} companies')
+        except Exception:
+            pass
 
         # DB-first resolution: pull any known enrichment from Postgres.
         normalized_by_company = {c: normalize_company_name(c) for c in unique_companies}
@@ -1295,7 +1363,7 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
             status['current_company'] = idx + 1
             status['company_name'] = company
             status['progress_pct'] = int((idx / len(unique_companies)) * 60)
-            processing_status[task_id] = status
+            _publish(task_id, status)
 
             domain = domain_by_company[company]
             base_sw = dict(db_software_by_company.get(company) or {})
@@ -1308,7 +1376,7 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
             sw_final = dict(base_sw)
             if not swit[0]:
                 status['software_phase'] = f'processing ({company})'
-                processing_status[task_id] = status
+                _publish(task_id, status)
                 sw_prompt = render_software_prompt(
                     software_prompt_tpl, company, domain, active_cats)
                 sw_raw = _call_ollama(sw_prompt, cfg=ollama_cfg)
@@ -1324,7 +1392,7 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
             intent_final = base_intent
             if not swit[1]:
                 status['intent_phase'] = f'processing ({company})'
-                processing_status[task_id] = status
+                _publish(task_id, status)
                 in_prompt = intent_prompt_tpl.format(company_name=company, company_domain=domain)
                 in_raw = _call_ollama(in_prompt, cfg=ollama_cfg)
                 in_data = _extract_json(in_raw) or {}
@@ -1346,7 +1414,7 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
         status['intent_phase'] = 'complete'
         status['tier_phase'] = 'processing'
         status['progress_pct'] = 60
-        processing_status[task_id] = status
+        _publish(task_id, status)
 
         # Collect all unique titles from rows
         unique_titles = set()
@@ -1383,7 +1451,7 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
         # Phase 4: Validation per row
         status['validation_phase'] = 'processing'
         status['progress_pct'] = 65
-        processing_status[task_id] = status
+        _publish(task_id, status)
 
         # Build output
         new_header = list(header) + ['Software', 'Intent', 'Tier (Classified)', 'To be Removed', 'Validation Issues', 'Enrichment Source']
@@ -1395,7 +1463,7 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
         for idx, row in enumerate(rows):
             status['current_row'] = idx + 1
             status['progress_pct'] = 65 + int((idx / len(rows)) * 32)
-            processing_status[task_id] = status
+            _publish(task_id, status)
 
             new_row = list(row)
             while len(new_row) < len(header):
@@ -1539,17 +1607,49 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
             print(f'DB persist warning for {task_id}: {e}')
 
         results_store[task_id] = str(out_path)
+
+        # Store processed artefacts in S3-compatible storage (best effort).
+        output_key = template_key = None
+        if storage.enabled():
+            try:
+                output_key = f'processed/{task_id}/enriched_leads.csv'
+                storage.upload_file(out_path, output_key, content_type='text/csv')
+                if os.path.exists(str(template_path)):
+                    template_key = f'processed/{task_id}/data_request.xlsx'
+                    storage.upload_file(template_path, template_key,
+                                        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                dbstore.log_event(task_id, 'Processed files stored in object storage')
+            except Exception as e:
+                dbstore.log_event(task_id, f'Object storage upload failed: {e}', 'warning')
+                print(f'S3 output warning: {e}')
+
         status['state'] = 'complete'
         status['progress_pct'] = 100
         status['validation_phase'] = 'complete'
-        processing_status[task_id] = status
+        _publish(task_id, status, force=True)
+        try:
+            dbstore.set_upload_status(task_id, status='complete', finished=True,
+                                      output_key=output_key, template_key=template_key,
+                                      total_companies=len(unique_companies))
+            dbstore.log_event(task_id, f'Completed: {len(unique_companies)} companies enriched')
+            dbstore.add_notification(owner or 'admin', task_id, 'complete',
+                                     f'Enrichment finished for {filename or "file"}')
+        except Exception as e:
+            print(f'completion status warning: {e}')
 
     except Exception as e:
         import traceback
         status['state'] = 'error'
         status['error'] = str(e)
         status['traceback'] = traceback.format_exc()
-        processing_status[task_id] = status
+        _publish(task_id, status, force=True)
+        try:
+            dbstore.set_upload_status(task_id, status='error', error=str(e), finished=True)
+            dbstore.log_event(task_id, f'Error: {e}', 'error')
+            dbstore.add_notification(owner or 'admin', task_id,
+                                     'error', f'Enrichment failed: {e}')
+        except Exception:
+            pass
         print(f'Error processing {task_id}: {e}')
         traceback.print_exc()
 
@@ -1678,6 +1778,65 @@ def company(normalized_name):
         flash('Company not found', 'error')
         return redirect(url_for('search'))
     return render_template('company.html', c=hit)
+
+
+# ---------------------------------------------------------------------------
+# Upload history & notifications
+# ---------------------------------------------------------------------------
+@app.context_processor
+def inject_nav():
+    count = 0
+    if session.get('user'):
+        try:
+            count = dbstore.unread_notification_count(session['user'])
+        except Exception:
+            count = 0
+    return {'unread_notifications': count}
+
+
+@app.route('/history')
+@login_required
+def history():
+    owner = None if session.get('role') == 'admin' else session.get('user')
+    uploads = dbstore.list_uploads(owner=owner)
+    return render_template('history.html', uploads=uploads, active='history')
+
+
+@app.route('/history/<upload_id>')
+@login_required
+def history_detail(upload_id):
+    up = dbstore.get_upload(upload_id)
+    if not up:
+        flash('Upload not found', 'error')
+        return redirect(url_for('history'))
+    if session.get('role') != 'admin' and up.get('owner') != session.get('user'):
+        flash('Not authorised', 'error')
+        return redirect(url_for('history'))
+    events = dbstore.get_events(upload_id)
+    return render_template('history_detail.html', u=up, events=events, active='history')
+
+
+@app.route('/api/upload/<upload_id>')
+@login_required
+def api_upload(upload_id):
+    up = dbstore.get_upload(upload_id)
+    if not up:
+        return jsonify({'error': 'not found'}), 404
+    return jsonify({
+        'status': up.get('status'),
+        'progress': up.get('progress'),
+        'output_key': up.get('output_key'),
+        'template_key': up.get('template_key'),
+        'error': up.get('error'),
+    })
+
+
+@app.route('/notifications')
+@login_required
+def notifications():
+    items = dbstore.list_notifications(session['user'])
+    dbstore.mark_notifications_read(session['user'])
+    return render_template('notifications.html', items=items, active='notifications')
 
 
 @app.route('/admin', methods=['GET', 'POST'])

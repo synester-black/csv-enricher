@@ -30,3 +30,13 @@ services:
         sync: false
       - key: MICROSOFT_ALLOWED_DOMAIN
         sync: false
+      - key: AWS_ENDPOINT_URL_S3
+        value: https://br-round-glade-b3rrb5f4.storage.c-4.ap-southeast-1.aws.neon.tech
+      - key: AWS_REGION
+        value: ap-southeast-1
+      - key: S3_BUCKET
+        value: csv-upload
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
