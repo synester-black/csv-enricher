@@ -74,6 +74,7 @@ def build_companies(rows, idx):
                 'normalized_name': norm,
                 'account_name': account_name,
                 'software': {},
+                'contact_titles': [],
                 'raw': {},
             },
         )
@@ -96,6 +97,9 @@ def build_companies(rows, idx):
                 for v in vals:
                     if v not in rec['software'][category]:
                         rec['software'][category].append(v)
+        for t in split_multi(get(r, 'contact_titles')):
+            if t not in rec['contact_titles']:
+                rec['contact_titles'].append(t)
         # raw / verbatim row
         raw = {}
         for k, i in idx.items():
@@ -112,6 +116,7 @@ def build_companies(rows, idx):
         # materialise category columns from the merged software dict
         rec.update(software_dict_to_row(rec['software']))
         rec.pop('software', None)
+        rec['contact_titles'] = '; '.join(rec.get('contact_titles') or []) or None
     return companies
 
 

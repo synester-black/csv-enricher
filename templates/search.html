@@ -21,6 +21,11 @@
     <form method="GET" action="{{ url_for('search') }}">
       <div class="filters">
         <input type="text" name="q" placeholder="Company name..." value="{{ q }}">
+        <input type="text" name="title" list="title-list" value="{{ title }}"
+               placeholder="Job title (e.g. CFO, FP&amp;A Manager)">
+        <datalist id="title-list">
+          {% for t in common_titles %}<option value="{{ t }}"></option>{% endfor %}
+        </datalist>
         <select name="industry">
           <option value="">All industries</option>
           {% for ind in industries %}
@@ -40,6 +45,10 @@
         <button class="btn btn-primary" type="submit">Search</button>
         <button class="btn btn-success" type="submit" name="export" value="1">Export Data Request (.xlsx)</button>
       </div>
+      <p style="font-size:12px;color:var(--muted);margin-top:10px;">
+        Job title search matches <strong>similar titles</strong> automatically — e.g. “CFO” also matches
+        Chief Financial Officer, Finance Director, Head of Finance, and VP Finance.
+      </p>
     </form>
   </div>
 
@@ -64,9 +73,9 @@
       </table>
     </div>
     <div class="pager">
-      {% if page > 1 %}<a href="{{ url_for('search', q=q, industry=industry, category=category, location=location, page=page-1) }}">&laquo; Prev</a>{% endif %}
+      {% if page > 1 %}<a href="{{ url_for('search', q=q, industry=industry, category=category, location=location, title=title, page=page-1) }}">&laquo; Prev</a>{% endif %}
       <span>Page {{ page }}</span>
-      {% if results|length == per_page %}<a href="{{ url_for('search', q=q, industry=industry, category=category, location=location, page=page+1) }}">Next &raquo;</a>{% endif %}
+      {% if results|length == per_page %}<a href="{{ url_for('search', q=q, industry=industry, category=category, location=location, title=title, page=page+1) }}">Next &raquo;</a>{% endif %}
     </div>
   </div>
   {% endif %}

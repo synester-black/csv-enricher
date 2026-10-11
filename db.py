@@ -157,6 +157,7 @@ CREATE TABLE IF NOT EXISTS companies (
     partner           TEXT,
     account_type      TEXT,
     employees         TEXT,
+    contact_titles    TEXT,
     epm_tool                          TEXT,
     erp_tool                          TEXT,
     data_tools                        TEXT,
@@ -219,6 +220,7 @@ ALTER TABLE companies ADD COLUMN IF NOT EXISTS crm_platform TEXT;
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS cloud TEXT;
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS other TEXT;
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS intent_data TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS contact_titles TEXT;
 ALTER TABLE companies DROP COLUMN IF EXISTS software;
 ALTER TABLE companies DROP COLUMN IF EXISTS intent;
 """
@@ -235,7 +237,7 @@ def init_schema():
 _UPSERT_COMPANY = """
 INSERT INTO companies
     (normalized_name, account_name, account_id, domain, website_url, linkedin_url,
-     industry, location, partner, account_type, employees,
+     industry, location, partner, account_type, employees, contact_titles,
      epm_tool, erp_tool, data_tools, business_intelligence_software,
      crm_platform, cloud, other, intent_data, enrichment_source, raw)
 VALUES %s
@@ -250,6 +252,12 @@ ON CONFLICT (normalized_name) DO UPDATE SET
     partner           = COALESCE(EXCLUDED.partner, companies.partner),
     account_type      = COALESCE(EXCLUDED.account_type, companies.account_type),
     employees         = COALESCE(EXCLUDED.employees, companies.employees),
+    contact_titles    = CASE
+                            WHEN EXCLUDED.contact_titles IS NULL OR EXCLUDED.contact_titles = '' THEN companies.contact_titles
+                            WHEN companies.contact_titles IS NULL OR companies.contact_titles = '' THEN EXCLUDED.contact_titles
+                            WHEN companies.contact_titles LIKE '%%' || EXCLUDED.contact_titles || '%%' THEN companies.contact_titles
+                            ELSE companies.contact_titles || '; ' || EXCLUDED.contact_titles
+                        END,
     epm_tool                          = COALESCE(EXCLUDED.epm_tool, companies.epm_tool),
     erp_tool                          = COALESCE(EXCLUDED.erp_tool, companies.erp_tool),
     data_tools                        = COALESCE(EXCLUDED.data_tools, companies.data_tools),
@@ -264,7 +272,7 @@ ON CONFLICT (normalized_name) DO UPDATE SET
 """
 
 _UPSERT_TEMPLATE = (
-    "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+    "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
     "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)"
 )
 
@@ -282,6 +290,7 @@ def _company_row(c):
         c.get('partner'),
         c.get('account_type'),
         c.get('employees'),
+        c.get('contact_titles'),
         c.get('epm_tool'),
         c.get('erp_tool'),
         c.get('data_tools'),
@@ -469,8 +478,78 @@ def _category_column(category):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Job titles (Apollo-style similar-title search)
+# ---------------------------------------------------------------------------
+# Canonical finance / FP&A ICP role groups -> the title variants that should
+# match when that role is searched. Searching any variant expands to the group.
+JOB_TITLE_GROUPS = {
+    'CFO / Finance Director': [
+        'cfo', 'chief financial officer', 'finance director', 'group finance director',
+        'financial director', 'vp finance', 'vice president finance', 'head of finance',
+        'chief financial', 'group cfo', 'deputy chief financial officer',
+        'international cfo', 'commercial director',
+    ],
+    'Financial Controller': [
+        'financial controller', 'group financial controller', 'controller',
+        'financial control', 'head of financial control', 'financial controls',
+    ],
+    'FP&A Director / Head of FP&A': [
+        'fp&a director', 'fpa director', 'head of fp&a', 'director of fp&a',
+        'head of financial planning', 'director of financial planning',
+        'financial planning and analysis director', 'head of planning',
+        'head of commercial finance', 'head of business performance',
+    ],
+    'FP&A / Finance Manager': [
+        'fp&a manager', 'fpa manager', 'finance manager', 'commercial finance manager',
+        'group finance manager', 'planning manager', 'reporting manager',
+        'business performance manager', 'finance business partner',
+        'management accountant', 'fp&a lead',
+    ],
+    'Finance Transformation / Systems': [
+        'finance transformation', 'finance systems', 'head of finance systems',
+        'epm manager', 'epm consultant', 'corporate performance', 'finance systems manager',
+        'tm1 developer', 'anaplan model builder', 'onestream',
+    ],
+    'FP&A Analyst': [
+        'fp&a analyst', 'fpa analyst', 'financial analyst', 'finance analyst',
+        'senior financial analyst', 'management accountant', 'commercial analyst',
+    ],
+    'Business Intelligence / Analytics': [
+        'business intelligence', 'bi manager', 'bi analyst', 'bi developer',
+        'analytics manager', 'data analyst', 'power bi', 'reporting analyst',
+    ],
+    'Accounting / Treasury / Audit': [
+        'accountant', 'accounting', 'treasury', 'audit', 'financial reporting',
+        'group accountant', 'financial accountant',
+    ],
+    'CFO Office / Strategy': [
+        'strategy', 'corporate development', 'group strategy', 'm&a', 'mergers and acquisitions',
+        'chief of staff', 'corporate finance',
+    ],
+}
+
+
+def _title_variants(title):
+    """Expand a searched title into all matching variants (Apollo-style)."""
+    if not title:
+        return []
+    t = title.strip().lower()
+    for variants in JOB_TITLE_GROUPS.values():
+        for v in variants:
+            if t == v or t in v or v in t:
+                return list(variants)
+    return [t]
+
+
+# Flat, de-duplicated list of the most common titles for the search dropdown.
+COMMON_JOB_TITLES = sorted({
+    v for variants in JOB_TITLE_GROUPS.values() for v in variants
+})
+
+
 def search_companies(q='', industry='', category='', location='', partner='',
-                     page=1, per_page=50, org_id=None):
+                     title='', page=1, per_page=50, org_id=None):
     """Search companies by text / filters. Returns (rows, total)."""
     clauses, params = [], []
     if q:
@@ -483,6 +562,14 @@ def search_companies(q='', industry='', category='', location='', partner='',
     if location:
         clauses.append('location ILIKE %s')
         params.append(f'%{location}%')
+    if title:
+        variants = _title_variants(title)
+        if variants:
+            likes = [f'%{v}%' for v in variants]
+            clauses.append('(contact_titles ILIKE ANY(%s) OR '
+                           'normalized_name IN (SELECT company_normalized FROM records '
+                           'WHERE data::text ILIKE ANY(%s)))')
+            params += [likes, likes]
     if partner:
         clauses.append('partner ILIKE %s')
         params.append(f'%{partner}%')

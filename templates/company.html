@@ -27,6 +27,9 @@
           {% endfor %}
         </td></tr>
         {% if c.intent_data %}<tr><th>Intent</th><td><code style="background:#f1f5f9;padding:3px 8px;border-radius:6px;font-size:12px;">{{ c.intent_data }}</code></td></tr>{% endif %}
+        {% if c.contact_titles %}<tr><th>Job Titles</th><td>
+          {% for t in c.contact_titles.split(';') %}{% if t.strip() %}<span class="pill">{{ t.strip() }}</span>{% endif %}{% endfor %}
+        </td></tr>{% endif %}
         {% if c.raw %}<tr><th>Raw Record</th><td><code style="background:#f1f5f9;padding:3px 8px;border-radius:6px;font-size:12px;">{{ c.raw }}</code></td></tr>{% endif %}
       </table>
     </div>

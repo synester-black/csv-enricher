@@ -1369,6 +1369,7 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
         output_rows = []
         db_records = []
         company_tiers = {}
+        company_titles = {}
 
         for idx, row in enumerate(rows):
             status['current_row'] = idx + 1
@@ -1429,6 +1430,10 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
 
             output_rows.append(new_row)
             company_tiers.setdefault(company, []).append(tier_value)
+            if title_val:
+                company_titles.setdefault(company, [])
+                if title_val not in company_titles[company]:
+                    company_titles[company].append(title_val)
 
             # Capture the raw row + computed output for persistence
             db_records.append({
@@ -1495,7 +1500,7 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
         for c in unique_companies:
             sw = company_software.get(c) or {}
             it = company_intent.get(c) or {}
-            if not sw and not it:
+            if not sw and not it and not company_titles.get(c):
                 continue
             writeback.append({
                 'normalized_name': normalized_by_company[c],
@@ -1503,6 +1508,7 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
                 'domain': domain_by_company.get(c),
                 **software_dict_to_row(sw),
                 'intent_data': json.dumps(it) if it else None,
+                'contact_titles': '; '.join(company_titles.get(c) or []) or None,
                 'enrichment_source': source_map.get(c, 'model'),
             })
         try:
@@ -1580,13 +1586,15 @@ def search():
     category = request.args.get('category', '').strip()
     location = request.args.get('location', '').strip()
     partner = request.args.get('partner', '').strip()
+    title = request.args.get('title', '').strip()
 
     results, total = [], 0
-    if any([q, industry, category, location, partner]):
+    if any([q, industry, category, location, partner, title]):
         rows, total = search_companies(q=q or None, industry=industry or None,
                                        category=category or None,
                                        location=location or None,
                                        partner=partner or None,
+                                       title=title or None,
                                        page=page)
         results = rows
 
@@ -1594,14 +1602,17 @@ def search():
         rows, _ = search_companies(q=q or None, industry=industry or None,
                                    category=category or None,
                                    location=location or None,
-                                   partner=partner or None, page=1, per_page=10000)
+                                   partner=partner or None,
+                                   title=title or None, page=1, per_page=10000)
         return _export_search(rows)
 
     return render_template('search.html', results=results, total=total, page=page,
                            per_page=50, categories=CATEGORY_COL, columns=CAT_COLUMN_LABEL,
                            q=q, industry=industry, category=category,
-                           location=location, partner=partner,
+                           location=location, partner=partner, title=title,
                            industries=dbstore.distinct_industries(),
+                           common_titles=dbstore.COMMON_JOB_TITLES,
+                           title_groups=dbstore.JOB_TITLE_GROUPS,
                            stats=dbstore.db_stats(), active='search')
 
 
