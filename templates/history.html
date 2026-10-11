@@ -22,7 +22,11 @@
           <td style="font-size:12px;color:var(--muted);">{{ u.started_at.strftime('%Y-%m-%d %H:%M') if u.started_at else '' }}</td>
           <td style="font-size:12px;color:var(--muted);">{{ u.finished_at.strftime('%Y-%m-%d %H:%M') if u.finished_at else '' }}</td>
           <td>
-            {% if u.status == 'running' %}<a class="cell" href="{{ url_for('progress', task_id=u.id) }}">View live</a>{% endif %}
+            {% if u.status in ('pending','running') %}
+              <a class="cell" href="{{ url_for('history_detail', upload_id=u.id) }}">Progress</a>
+            {% elif u.output_key %}
+              <a class="cell" href="{{ url_for('download', task_id=u.id) }}">CSV</a>
+            {% endif %}
           </td>
         </tr>
         {% endfor %}

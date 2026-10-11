@@ -1831,6 +1831,69 @@ def api_upload(upload_id):
     })
 
 
+@app.route('/history/<upload_id>/resume', methods=['POST'])
+@login_required
+def resume_upload(upload_id):
+    up = dbstore.get_upload(upload_id)
+    if not up:
+        flash('Upload not found', 'error')
+        return redirect(url_for('history'))
+    if session.get('role') != 'admin' and up.get('owner') != session.get('user'):
+        flash('Not authorised', 'error')
+        return redirect(url_for('history'))
+    if up.get('status') == 'running':
+        return redirect(url_for('progress', task_id=upload_id))
+
+    key = up.get('input_key')
+    if not key or not storage.enabled():
+        flash('No stored file available to resume this upload', 'error')
+        return redirect(url_for('history_detail', upload_id=upload_id))
+
+    ext = os.path.splitext(up.get('filename') or '')[1].lower() or '.csv'
+    in_path = UPLOAD_DIR / f'{upload_id}_input{ext}'
+    try:
+        if not in_path.exists():
+            storage.download_file(key, in_path)
+        header, rows = read_tabular(str(in_path))
+    except Exception as e:
+        flash(f'Could not load stored file: {e}', 'error')
+        return redirect(url_for('history_detail', upload_id=upload_id))
+
+    csv_previews[upload_id] = {
+        'header': header,
+        'rows': rows[:5],
+        'filepath': str(in_path),
+        'filename': up.get('filename'),
+        'file_format': up.get('file_format') or ext.lstrip('.').upper(),
+        'input_key': key,
+    }
+    return redirect(url_for('mapping', task_id=upload_id))
+
+
+@app.route('/history/<upload_id>/delete', methods=['POST'])
+@login_required
+def delete_upload(upload_id):
+    up = dbstore.get_upload(upload_id)
+    if not up:
+        return redirect(url_for('history'))
+    if session.get('role') != 'admin' and up.get('owner') != session.get('user'):
+        flash('Not authorised', 'error')
+        return redirect(url_for('history'))
+    if up.get('status') == 'running':
+        flash('Cannot delete a running upload', 'error')
+        return redirect(url_for('history_detail', upload_id=upload_id))
+    for k in (up.get('input_key'), up.get('output_key'), up.get('template_key')):
+        try:
+            if k:
+                storage.delete_object(k)
+        except Exception as e:
+            print(f'S3 delete warning: {e}')
+    with dbstore.get_conn() as conn, conn.cursor() as cur:
+        cur.execute('DELETE FROM uploads WHERE id = %s', (str(upload_id),))
+    flash('Upload deleted', 'success')
+    return redirect(url_for('history'))
+
+
 @app.route('/notifications')
 @login_required
 def notifications():

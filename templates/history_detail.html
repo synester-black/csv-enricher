@@ -6,7 +6,7 @@
     <div>
       <h1>{{ u.filename or 'Upload' }}</h1>
       <p>
-        <span class="pill src-{{ 'db' if u.status=='complete' else 'mixed' }}">{{ u.status }}</span>
+        <span class="pill src-{{ 'db' if u.status=='complete' else 'mixed' }}" id="status-pill">{{ u.status }}</span>
         &middot; {{ u.file_format or '' }} &middot; {{ u.row_count or 0 }} rows &middot; {{ u.total_companies or 0 }} companies
         {% if u.owner %} &middot; {{ u.owner }}{% endif %}
       </p>
@@ -14,19 +14,38 @@
     <div>
       {% if u.output_key %}<a class="btn btn-primary" href="{{ url_for('download', task_id=u.id) }}">Enriched CSV</a>{% endif %}
       {% if u.template_key %}<a class="btn btn-accent" href="{{ url_for('download_template', task_id=u.id) }}">Data Request (.xlsx)</a>{% endif %}
+      {% if u.status in ('pending','running') and u.input_key %}
+        <form method="POST" action="{{ url_for('resume_upload', upload_id=u.id) }}" style="display:inline;">
+          <button class="btn btn-accent" type="submit">Resume / Start processing</button>
+        </form>
+      {% endif %}
+      {% if u.status != 'running' %}
+        <form method="POST" action="{{ url_for('delete_upload', upload_id=u.id) }}" style="display:inline;"
+              onsubmit="return confirm('Delete this upload and its stored files?')">
+          <button class="btn btn-ghost" type="submit" style="color:var(--err);">Delete</button>
+        </form>
+      {% endif %}
     </div>
   </div>
 
-  {% if u.status == 'running' %}
-  <div class="card" id="live-card">
-    <div class="progress" style="background:var(--line);border-radius:20px;height:9px;overflow:hidden;">
-      <div id="bar" style="height:100%;width:0%;background:var(--grad-accent);transition:width .5s;"></div>
-    </div>
-    <div style="text-align:center;color:var(--muted);font-size:13px;margin-top:8px;">
-      <span id="pct">0%</span> <span id="cname"></span>
+  <div class="card" id="progress-card" style="margin-bottom:18px;">
+    <div id="progress-body">
+      {% if u.status == 'pending' %}
+        <p style="color:var(--muted);">This upload has not started processing yet.{% if u.input_key %} Use <strong>Resume</strong> to map columns and start.{% else %} No stored file is available to resume (uploaded before storage was enabled).{% endif %}</p>
+      {% elif u.status == 'running' %}
+        <div style="background:var(--line);border-radius:20px;height:9px;overflow:hidden;">
+          <div id="bar" style="height:100%;width:0%;background:var(--grad-accent);transition:width .5s;"></div>
+        </div>
+        <div style="text-align:center;color:var(--muted);font-size:13px;margin-top:8px;">
+          <span id="pct">0%</span> <span id="cname"></span>
+        </div>
+      {% elif u.status == 'complete' %}
+        <p style="color:var(--ok);font-weight:600;">&#10003; Completed — {{ u.total_companies or 0 }} companies enriched.</p>
+      {% elif u.status == 'error' %}
+        <p style="color:var(--err);font-weight:600;">Processing failed.</p>
+      {% endif %}
     </div>
   </div>
-  {% endif %}
 
   {% if u.error %}
   <div class="flash error" style="margin-bottom:18px;">{{ u.error }}</div>
@@ -56,9 +75,12 @@
     const id = '{{ u.id }}';
     const poll = () => fetch('/api/upload/' + id).then(r => r.json()).then(d => {
       const p = d.progress || {};
-      document.getElementById('bar').style.width = (p.progress_pct || 0) + '%';
-      document.getElementById('pct').textContent = (p.progress_pct || 0) + '%';
-      document.getElementById('cname').textContent = p.company_name ? 'Currently: ' + p.company_name : '';
+      const bar = document.getElementById('bar');
+      if (bar) {
+        bar.style.width = (p.progress_pct || 0) + '%';
+        document.getElementById('pct').textContent = (p.progress_pct || 0) + '%';
+        document.getElementById('cname').textContent = p.company_name ? 'Currently: ' + p.company_name : '';
+      }
       if (d.status === 'complete' || d.status === 'error') { location.reload(); return; }
       setTimeout(poll, 2000);
     }).catch(() => setTimeout(poll, 3000));
