@@ -47,12 +47,12 @@
         {% if c.account_type %}<tr><th>Account Type</th><td>{{ c.account_type }}</td></tr>{% endif %}
         {% if c.employee %}<tr><th>Employees</th><td>{{ c.employee }}</td></tr>{% endif %}
         <tr><th>Technology</th><td>
-          {% for cat, vals in (c.software or {}).items() %}
-            {% if vals %}<span class="pill"><strong>{{ cat }}</strong>: {{ vals|join(', ') }}</span>{% endif %}
+          {% for col, label in [('epm_tool','EPM Tool'),('erp_tool','ERP Tool'),('data_tools','Data Tools'),('business_intelligence_software','Business Intelligence'),('crm_platform','CRM Platform'),('cloud','Cloud'),('other','Other')] %}
+            {% if c[col] %}<span class="pill"><strong>{{ label }}</strong>: {{ c[col] }}</span>{% endif %}
           {% endfor %}
         </td></tr>
-        {% if c.intent and (c.intent.values()|select|list) %}
-        <tr><th>Intent</th><td><code>{{ c.intent }}</code></td></tr>
+        {% if c.intent_data %}
+        <tr><th>Intent</th><td><code>{{ c.intent_data }}</code></td></tr>
         {% endif %}
         {% if c.raw %}
         <tr><th>Raw Record</th><td><code>{{ c.raw }}</code></td></tr>

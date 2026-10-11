@@ -13,8 +13,9 @@ import argparse
 import sys
 
 from db import (
-    MASTER_SOFTWARE_COLUMNS, _is_noise, extract_domain, init_schema,
-    normalize_company_name, split_multi, upsert_companies,
+    CAT_COLUMN_LABEL, MASTER_SOFTWARE_COLUMNS, _is_noise, extract_domain,
+    init_schema, normalize_company_name, software_dict_to_row, split_multi,
+    upsert_companies,
 )
 
 KNOWN_COLUMNS = {
@@ -108,8 +109,9 @@ def build_companies(rows, idx):
     for rec in companies:
         rec['domain'] = rec.get('domain') or extract_domain(rec.get('website_url'))
         rec['enrichment_source'] = 'db'
-    for c in companies:
-        c['raw'] = c['raw'] or None
+        # materialise category columns from the merged software dict
+        rec.update(software_dict_to_row(rec['software']))
+        rec.pop('software', None)
     return companies
 
 

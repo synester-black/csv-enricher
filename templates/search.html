@@ -90,8 +90,8 @@
           <td>{{ r.industry or '' }}</td>
           <td>{{ r.location or '' }}</td>
           <td>
-            {% for cat, vals in (r.software or {}).items() %}
-              {% if vals %}<span class="pill">{{ cat }}: {{ vals|join(', ') }}</span>{% endif %}
+            {% for col, label in columns.items() %}
+              {% if r[col] %}<span class="pill"><strong>{{ label }}</strong>: {{ r[col] }}</span>{% endif %}
             {% endfor %}
           </td>
           <td>{{ r.enrichment_source or 'db' }}</td>

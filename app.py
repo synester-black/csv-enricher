@@ -18,12 +18,13 @@ from flask import (
 
 import db as dbstore
 from db import (
+    CAT_COLUMN_LABEL,
     CATEGORY_COL,
     MODEL_SOFTWARE_CATEGORIES,
     bootstrap_admin, company_detail, create_upload, create_user, delete_user,
     get_user, list_users, lookup_companies, normalize_company_name,
-    save_records, search_companies, set_user_role, update_password,
-    upsert_companies,
+    row_to_software_dict, save_records, search_companies, set_user_role,
+    software_dict_to_row, update_password, upsert_companies,
 )
 from tabular import SUPPORTED_EXTENSIONS, read_tabular
 from template_exporter import build_template_row, write_template_xlsx
@@ -255,12 +256,14 @@ def settings():
         session['recaptcha_site_key'] = request.form.get('recaptcha_site_key', '')
         session['recaptcha_secret_key'] = request.form.get('recaptcha_secret_key', '')
         session['validation_regions'] = ','.join(request.form.getlist('validation_regions')) or 'uk'
+        session['software_categories'] = request.form.getlist('software_categories') or DEFAULT_SOFTWARE_CATEGORIES
         flash('Settings saved', 'success')
         _init_microsoft_oauth()  # Re-init with new values
-        return redirect(url_for('upload'))
+        return redirect(url_for('settings'))
     sp = session.get('software_prompt', SOFTWARE_PROMPT)
     ip = session.get('intent_prompt', INTENT_PROMPT)
     tp = session.get('tier_prompt', TIER_PROMPT)
+    active = session.get('software_categories', DEFAULT_SOFTWARE_CATEGORIES)
     return render_template('settings.html',
         ollama_url=session.get('ollama_url', OLLAMA_BASE_URL),
         ollama_model=session.get('ollama_model', OLLAMA_MODEL),
@@ -274,7 +277,9 @@ def settings():
         recaptcha_site_key=session.get('recaptcha_site_key', RECAPTCHA_SITE_KEY),
         recaptcha_secret_key=session.get('recaptcha_secret_key', RECAPTCHA_SECRET_KEY),
         validation_regions=session.get('validation_regions', 'uk'),
-        regions=REGIONS)
+        regions=REGIONS,
+        software_categories=active,
+        category_guidance=CATEGORY_GUIDANCE)
 
 # ---------------------------------------------------------------------------
 # Routes – Upload
@@ -402,6 +407,8 @@ def mapping(task_id):
             'intent_prompt': session.get('intent_prompt', INTENT_PROMPT),
             'tier_prompt': session.get('tier_prompt', TIER_PROMPT),
             'validation_regions': session.get('validation_regions', 'uk'),
+            'software_categories': session.get('software_categories',
+                                               DEFAULT_SOFTWARE_CATEGORIES),
         }
 
         threading.Thread(
@@ -654,44 +661,92 @@ def authorize_microsoft():
         flash(f'SSO login failed: {e}', 'error')
         return redirect(url_for('login'))
 
+@app.route('/api/ollama/models')
+@login_required
+def ollama_models():
+    """List available models from the configured Ollama endpoint."""
+    try:
+        cfg = _ollama_config()
+    except Exception:
+        cfg = {'url': OLLAMA_BASE_URL.rstrip('/'), 'model': OLLAMA_MODEL, 'api_key': OLLAMA_API_KEY}
+    headers = {'Content-Type': 'application/json'}
+    if cfg.get('api_key'):
+        headers['Authorization'] = f"Bearer {cfg['api_key']}"
+    try:
+        resp = requests.get(f"{cfg['url']}/api/tags", headers=headers, timeout=15)
+        if resp.status_code != 200:
+            return jsonify({'error': f'HTTP {resp.status_code}', 'models': []})
+        names = [m.get('name') for m in resp.json().get('models', [])]
+        names = [n for n in names if n]
+    except Exception as e:
+        return jsonify({'error': str(e), 'models': []})
+    return jsonify({'models': names})
+
+
 # ---------------------------------------------------------------------------
 # Prompt templates
 # ---------------------------------------------------------------------------
+# ICP category guidance used to build the software prompt. Keys are the model
+# category keys; each drives a row in the prompt's "{categories}" placeholder.
+CATEGORY_GUIDANCE = {
+    'EPM / CPM': 'EPM / CPM tooling (e.g. Anaplan, Pigment, Tagetik, Board, OneStream, IBM Planning Analytics/TM1)',
+    'ERP': 'ERP platform (e.g. SAP S/4HANA, Oracle Fusion Cloud ERP, Microsoft Dynamics 365, Workday)',
+    'Data Tools': 'Data warehousing and pipeline tools (e.g. Snowflake, Databricks, Microsoft Fabric, Informatica)',
+    'Business Intelligence (BI)': 'Business intelligence software (e.g. Power BI, Tableau, Qlik Sense, IBM Cognos)',
+    'CRM': 'CRM platform (e.g. Salesforce, HubSpot, Microsoft Dynamics, Zoho)',
+    'Cloud': 'Cloud platform (e.g. Microsoft Azure, Amazon Web Services, Google Cloud)',
+    'Other': 'Any other notable enterprise software in use',
+}
+
+DEFAULT_SOFTWARE_CATEGORIES = list(MODEL_SOFTWARE_CATEGORIES)
+
+# The active ICP categories are injected into the "{categories}" placeholder.
 SOFTWARE_PROMPT = """You are an Enterprise Technology Intelligence Agent.
 
-Your task is to identify the enterprise software used by the following company.
+Your task is to identify the enterprise software used by the following company, for the ICP technology categories that matter to our business.
 
 Company: {company_name}
 Company Domain: {company_domain}
 
-Research the company using the following sources in order of priority:
-1. Company careers page
-2. Job descriptions on LinkedIn Jobs, Indeed, Glassdoor, Greenhouse, Lever, Workday Careers, SmartRecruiters
-3. Official company documentation
-4. BuiltWith technology data
-5. Other reliable public sources
+Categories to research:
+{categories}
 
-Identify only the following categories:
-- ERP
-- CRM
-- Accounting & Finance
-- HRIS / HCM
-- Payroll
-- Procurement
-- Manufacturing
-- Business Intelligence (BI)
-- Analytics
+Research using reliable public sources (careers pages, job descriptions, official documentation, BuiltWith, and similar) in order of priority.
 
 Rules:
-- Only include technologies explicitly mentioned or strongly supported by reliable evidence.
-- Do NOT guess or infer technologies.
+- Only include technologies explicitly evidenced from public sources. Do not guess or infer.
+- Use official product names (e.g. SAP S/4HANA, Salesforce, Oracle Fusion Cloud ERP, Microsoft Dynamics 365, Workday, Power BI, Snowflake, Azure).
 - Remove duplicate technologies.
-- Use official product names (e.g., SAP S/4HANA, Salesforce, Oracle Fusion Cloud ERP, Microsoft Dynamics 365, Workday, Power BI).
-- If no technology is found for a category, return an empty array.
-- Return ONLY valid JSON. Do not include explanations, reasoning, or markdown.
+- If a category has no evidence, return an empty array for it.
+- Return ONLY valid JSON in the following shape. Do not include explanations, reasoning, or markdown.
 
-Return the response in exactly this format:
-{{"ERP": [], "CRM": [], "Accounting & Finance": [], "HRIS / HCM": [], "Payroll": [], "Procurement": [], "Manufacturing": [], "Business Intelligence (BI)": [], "Analytics": []}}"""
+{"EPM / CPM": [], "ERP": [], "Data Tools": [], "Business Intelligence (BI)": [], "CRM": [], "Cloud": [], "Other": []}"""
+
+
+def build_categories_block(active_keys):
+    """Render the "{categories}" placeholder rows for the enabled ICP categories."""
+    keys = [k for k in (active_keys or DEFAULT_SOFTWARE_CATEGORIES)
+            if k in CATEGORY_GUIDANCE]
+    if not keys:
+        keys = DEFAULT_SOFTWARE_CATEGORIES
+    return '\n'.join(f'- {k}: {CATEGORY_GUIDANCE[k]}' for k in keys)
+
+
+def render_software_prompt(template, company_name, company_domain, active_keys):
+    """Render a prompt template with its placeholders filled.
+
+    Templates may use any of: {company_name}, {company_domain}, {categories}.
+    Missing placeholders are filled from defaults so edits stay interactive.
+    """
+    placeholders = {
+        'company_name': company_name,
+        'company_domain': company_domain,
+        'categories': build_categories_block(active_keys),
+    }
+    result = template
+    for key, val in placeholders.items():
+        result = result.replace('{' + key + '}', val)
+    return result
 
 INTENT_PROMPT = """You are a B2B Sales Intelligence Agent.
 
@@ -1072,13 +1127,27 @@ def validate_row_deterministic(row_dict, regions=None):
 # ---------------------------------------------------------------------------
 # Main processing pipeline (runs in background thread)
 # ---------------------------------------------------------------------------
-def _software_complete(sw):
-    """True when every model software category is already populated (DB hit)."""
-    return bool(sw) and all(sw.get(cat) for cat in MODEL_SOFTWARE_CATEGORIES)
+def _software_complete(sw, keys=None):
+    """True when every *active* ICP category is already populated (DB hit)."""
+    keys = [k for k in (keys or DEFAULT_SOFTWARE_CATEGORIES) if k]
+    return bool(sw) and all(sw.get(k) for k in keys)
 
 
 def _has_values(d):
     return bool(d) and any(v for v in d.values() if v)
+
+
+def _parse_intent(s):
+    """Parse intent_data (a JSON string column) into a dict."""
+    if isinstance(s, dict):
+        return s
+    if not s:
+        return {}
+    try:
+        d = json.loads(s)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
 
 
 def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
@@ -1114,6 +1183,9 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
     intent_prompt_tpl = ollama_cfg.get('intent_prompt', INTENT_PROMPT)
     tier_prompt_tpl = ollama_cfg.get('tier_prompt', TIER_PROMPT)
     validation_regions = [r.strip() for r in ollama_cfg.get('validation_regions', 'uk').split(',') if r.strip()]
+    active_cats = [k for k in (ollama_cfg.get('software_categories')
+                               or DEFAULT_SOFTWARE_CATEGORIES)
+                   if k in CATEGORY_GUIDANCE] or DEFAULT_SOFTWARE_CATEGORIES
 
     try:
         # Read input (CSV, XLSX or XLS)
@@ -1187,8 +1259,8 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
         db_intent_by_company = {}
         for c in unique_companies:
             hit = db_hits.get(normalized_by_company[c])
-            db_software_by_company[c] = (hit.get('software') or {}) if hit else {}
-            db_intent_by_company[c] = (hit.get('intent') or {}) if hit else {}
+            db_software_by_company[c] = row_to_software_dict(hit) if hit else {}
+            db_intent_by_company[c] = _parse_intent(hit.get('intent_data')) if hit else {}
             domain_by_company[c] = ((hit.get('domain') if hit else '') or get_company_domain(c))
 
         # Phase 1 & 2: Software + Intent per company (DB values win, model fills gaps)
@@ -1207,14 +1279,15 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
             base_intent = db_intent_by_company.get(company) or {}
 
             model_used = False
-            swit = [_software_complete(base_sw), _has_values(base_intent)]
+            swit = [_software_complete(base_sw, active_cats), _has_values(base_intent)]
 
             # Prompt 1: Software (only for missing categories / new companies)
             sw_final = dict(base_sw)
             if not swit[0]:
                 status['software_phase'] = f'processing ({company})'
                 processing_status[task_id] = status
-                sw_prompt = software_prompt_tpl.format(company_name=company, company_domain=domain)
+                sw_prompt = render_software_prompt(
+                    software_prompt_tpl, company, domain, active_cats)
                 sw_raw = _call_ollama(sw_prompt, cfg=ollama_cfg)
                 sw_data = _extract_json(sw_raw) or {}
                 for k, v in sw_data.items():
@@ -1398,13 +1471,11 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
                 'location': hit.get('location'),
                 'account_type': hit.get('account_type'),
                 'partner': hit.get('partner'),
-                'software': company_software.get(c) or {},
-                'intent': company_intent.get(c) or {},
+                'intent_data': json.dumps(company_intent.get(c) or {}) if company_intent.get(c) else None,
                 'raw': hit.get('raw'),
+                **software_dict_to_row(company_software.get(c) or {}),
             }
             enrichment = {
-                'software': company_software.get(c) or {},
-                'intent': company_intent.get(c) or {},
                 'tier': _rep_tier(company_tiers.get(c, [])),
                 'source': source_map.get(c, 'model'),
             }
@@ -1418,14 +1489,20 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
             print(f'Template export warning ({task_id}): {e}')
 
         # Write computed enrichment back to the DB (companies cache)
-        writeback = [{
-            'normalized_name': normalized_by_company[c],
-            'account_name': c,
-            'domain': domain_by_company.get(c),
-            'software': company_software.get(c) or {},
-            'intent': company_intent.get(c) or {},
-            'enrichment_source': source_map.get(c, 'model'),
-        } for c in unique_companies if company_software.get(c) or company_intent.get(c)]
+        writeback = []
+        for c in unique_companies:
+            sw = company_software.get(c) or {}
+            it = company_intent.get(c) or {}
+            if not sw and not it:
+                continue
+            writeback.append({
+                'normalized_name': normalized_by_company[c],
+                'account_name': c,
+                'domain': domain_by_company.get(c),
+                **software_dict_to_row(sw),
+                'intent_data': json.dumps(it) if it else None,
+                'enrichment_source': source_map.get(c, 'model'),
+            })
         try:
             upsert_companies(writeback)
             save_records(task_id, db_records)
@@ -1519,7 +1596,7 @@ def search():
         return _export_search(rows)
 
     return render_template('search.html', results=results, total=total, page=page,
-                           per_page=50, categories=CATEGORY_COL,
+                           per_page=50, categories=CATEGORY_COL, columns=CAT_COLUMN_LABEL,
                            q=q, industry=industry, category=category,
                            location=location, partner=partner)
 
@@ -1538,13 +1615,12 @@ def _export_search(rows):
             'location': hit.get('location'),
             'account_type': hit.get('account_type'),
             'partner': hit.get('partner'),
-            'software': hit.get('software') or {},
-            'intent': hit.get('intent') or {},
+            'intent_data': hit.get('intent_data') or '',
             'raw': hit.get('raw'),
         }
+        for col in CAT_COLUMN_LABEL:
+            account[col] = hit.get(col)
         enrichment = {
-            'software': hit.get('software') or {},
-            'intent': hit.get('intent') or {},
             'tier': '',
             'source': hit.get('enrichment_source') or 'db',
         }

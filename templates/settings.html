@@ -54,14 +54,31 @@
         <div class="help">Your Ollama server address (local or cloud).</div>
 
         <label for="ollama_model">Model Name</label>
-        <input type="text" name="ollama_model" id="ollama_model"
-               value="{{ ollama_model }}" placeholder="gemma3:27b">
-        <div class="help">Model available on your Ollama server (e.g. gemma3:27b, qwen3-coder:480b, deepseek-v3.1:671b).</div>
+        <select name="ollama_model" id="ollama_model" style="width:100%;padding:10px 12px;border:1px solid #ccc;border-radius:6px;font-size:14px;">
+          <option value="{{ ollama_model }}">{{ ollama_model or 'Select a model…' }}</option>
+        </select>
+        <div class="help">Loaded live from your Ollama server on the button below, or type your own.</div>
+        <button type="button" id="refresh-models" style="margin-top:8px;padding:8px 16px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer;">Refresh available models</button>
+        <div class="help" id="models-msg"></div>
 
         <label for="ollama_api_key">API Key</label>
         <input type="password" name="ollama_api_key" id="ollama_api_key"
                value="{{ ollama_api_key }}" placeholder="Bearer token if required">
         <div class="help">Leave blank if your Ollama server doesn't require authentication.</div>
+      </div>
+
+      <div class="card">
+        <h2>ICP Technology Categories <span class="badge">Targeting</span></h2>
+        <p style="font-size:13px;color:#666;margin-bottom:12px;">Which technology categories matter for your ICP? Ticking fewer categories makes enrichment cheaper and more focused — only enabled categories are asked of the model.</p>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          {% for key, guidance in category_guidance.items() %}
+          <label style="display:flex;align-items:flex-start;gap:10px;font-size:14px;cursor:pointer;">
+            <input type="checkbox" name="software_categories" value="{{ key }}"
+              {% if key in software_categories %}checked{% endif %} style="margin-top:3px;">
+            <span><strong>{{ key }}</strong> — <span style="color:#666;font-weight:400;">{{ guidance }}</span></span>
+          </label>
+          {% endfor %}
+        </div>
       </div>
 
       <div class="card">
@@ -123,7 +140,7 @@
         <label for="software_prompt">Software Research Prompt</label>
         <textarea name="software_prompt" id="software_prompt" rows="8"
           style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;font-family:monospace;margin-bottom:14px;">{{ software_prompt }}</textarea>
-        <div class="help">Uses {company_name} and {company_domain} as placeholders. Must return valid JSON.</div>
+        <div class="help">Placeholders: {company_name}, {company_domain} and {categories}. The {categories} placeholder is filled from your ICP Technology Categories above. Must return valid JSON.</div>
 
         <label for="intent_prompt">Intent Research Prompt</label>
         <textarea name="intent_prompt" id="intent_prompt" rows="8"
@@ -142,5 +159,34 @@
     </form>
     <a class="back" href="{{ url_for('upload') }}">&larr; Back to Upload</a>
   </div>
+  <script>
+    const modelSel = document.getElementById('ollama_model');
+    const current = modelSel.options[0].value;
+
+    async function loadModels() {
+      const msg = document.getElementById('models-msg');
+      msg.textContent = 'Loading models…';
+      try {
+        const res = await fetch('{{ url_for('ollama_models') }}');
+        const data = await res.json();
+        if (data.error) { msg.textContent = 'Error: ' + data.error; return; }
+        modelSel.innerHTML = '';
+        data.models.forEach(m => {
+          const o = document.createElement('option');
+          o.value = m; o.textContent = m;
+          if (m === current) o.selected = true;
+          modelSel.appendChild(o);
+        });
+        if (!data.models.includes(current)) {
+          const o = document.createElement('option');
+          o.value = current; o.textContent = current + ' (saved)'; o.selected = true;
+          modelSel.appendChild(o);
+        }
+        msg.textContent = data.models.length + ' models available.';
+      } catch (e) { msg.textContent = 'Could not load models'; }
+    }
+    document.getElementById('refresh-models').addEventListener('click', loadModels);
+    loadModels();
+  </script>
 </body>
 </html>

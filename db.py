@@ -32,22 +32,48 @@ _LEGAL_SUFFIXES = {
     'srl', 'bv', 'nv', 'ab', 'oy', 'aps', 'pte', 'pvt', 'private',
 }
 
-# Master workbook columns -> canonical enrichment category used by the app.
-MASTER_SOFTWARE_COLUMNS = {
-    'EPM': 'EPM / CPM',
-    'ERP': 'ERP',
-    'CRM': 'CRM',
-    'Data Tools': 'Data Tools',
-    'Business Intelligence Software': 'Business Intelligence (BI)',
-    'Cloud': 'Cloud',
-    'Other': 'Other',
-}
-
-# Categories produced by the LLM software prompt.
-MODEL_SOFTWARE_CATEGORIES = [
-    'ERP', 'CRM', 'Accounting & Finance', 'HRIS / HCM', 'Payroll',
-    'Procurement', 'Manufacturing', 'Business Intelligence (BI)', 'Analytics',
+# Master-workbook / template columns -> (db column, template label, model key).
+# The master data template works with these 7 technology columns plus intent.
+CATEGORIES = [
+    ('epm_tool',                           'EPM Tool',                           'EPM',  'EPM / CPM'),
+    ('erp_tool',                           'ERP Tool',                           'ERP',  'ERP'),
+    ('data_tools',                         'Data Tools',                         'Data Tools', 'Data Tools'),
+    ('business_intelligence_software',     'Business Intelligence Software',     'Business Intelligence Software', 'Business Intelligence (BI)'),
+    ('crm_platform',                       'CRM Platform',                       'CRM',  'CRM'),
+    ('cloud',                              'Cloud',                              'Cloud', 'Cloud'),
+    ('other',                              'Other',                              'Other', 'Other'),
 ]
+
+# db column -> human template label (for the search UI)
+CAT_COLUMN_LABEL = {t[0]: t[1] for t in CATEGORIES}
+# master workbook header -> canonical model key
+MASTER_SOFTWARE_COLUMNS = {t[2]: t[3] for t in CATEGORIES}
+# model key (e.g. 'EPM / CPM') -> db column
+MODELKEY_COL = {t[3]: t[0] for t in CATEGORIES}
+MODEL_SOFTWARE_CATEGORIES = [t[3] for t in CATEGORIES]
+
+
+def row_to_software_dict(row):
+    """Convert a companies row (with category columns) into {model_key: [values]}."""
+    return {
+        key: [v.strip() for v in (row.get(col) or '').split(';') if v.strip()]
+        for col, _label, _master, key in CATEGORIES
+    }
+
+
+def software_dict_to_row(sw):
+    """Convert {model_key: [values] or str} into {db_column: 'a; b'}."""
+    out = {}
+    for col, _label, _master, key in CATEGORIES:
+        vals = sw.get(key)
+        if isinstance(vals, (list, tuple)):
+            vals = [str(v).strip() for v in vals if str(v).strip()]
+            out[col] = '; '.join(vals) if vals else None
+        elif vals:
+            out[col] = str(vals).strip() or None
+        else:
+            out[col] = None
+    return out
 
 
 def normalize_company_name(name):
@@ -131,15 +157,20 @@ CREATE TABLE IF NOT EXISTS companies (
     partner           TEXT,
     account_type      TEXT,
     employees         TEXT,
-    software          JSONB NOT NULL DEFAULT '{}'::jsonb,
-    intent            JSONB NOT NULL DEFAULT '{}'::jsonb,
+    epm_tool                          TEXT,
+    erp_tool                          TEXT,
+    data_tools                        TEXT,
+    business_intelligence_software    TEXT,
+    crm_platform                      TEXT,
+    cloud                             TEXT,
+    other                             TEXT,
+    intent_data                       TEXT,
     enrichment_source TEXT,
     raw               JSONB,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_companies_domain ON companies (domain);
-CREATE INDEX IF NOT EXISTS idx_companies_software_gin ON companies USING gin (software);
 
 CREATE TABLE IF NOT EXISTS uploads (
     id              UUID PRIMARY KEY,
@@ -178,6 +209,18 @@ CREATE TABLE IF NOT EXISTS users (
 
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS org_id TEXT;
 ALTER TABLE records  ADD COLUMN IF NOT EXISTS org_id TEXT;
+
+-- Migrate legacy JSONB store to the master-template columns.
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS epm_tool TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS erp_tool TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS data_tools TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS business_intelligence_software TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS crm_platform TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS cloud TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS other TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS intent_data TEXT;
+ALTER TABLE companies DROP COLUMN IF EXISTS software;
+ALTER TABLE companies DROP COLUMN IF EXISTS intent;
 """
 
 
@@ -192,8 +235,9 @@ def init_schema():
 _UPSERT_COMPANY = """
 INSERT INTO companies
     (normalized_name, account_name, account_id, domain, website_url, linkedin_url,
-     industry, location, partner, account_type, employees, software, intent,
-     enrichment_source, raw)
+     industry, location, partner, account_type, employees,
+     epm_tool, erp_tool, data_tools, business_intelligence_software,
+     crm_platform, cloud, other, intent_data, enrichment_source, raw)
 VALUES %s
 ON CONFLICT (normalized_name) DO UPDATE SET
     account_name      = COALESCE(EXCLUDED.account_name, companies.account_name),
@@ -206,18 +250,22 @@ ON CONFLICT (normalized_name) DO UPDATE SET
     partner           = COALESCE(EXCLUDED.partner, companies.partner),
     account_type      = COALESCE(EXCLUDED.account_type, companies.account_type),
     employees         = COALESCE(EXCLUDED.employees, companies.employees),
-    software          = companies.software || EXCLUDED.software,
-    intent            = CASE
-                            WHEN EXCLUDED.intent = '{}'::jsonb THEN companies.intent
-                            ELSE EXCLUDED.intent
-                        END,
+    epm_tool                          = COALESCE(EXCLUDED.epm_tool, companies.epm_tool),
+    erp_tool                          = COALESCE(EXCLUDED.erp_tool, companies.erp_tool),
+    data_tools                        = COALESCE(EXCLUDED.data_tools, companies.data_tools),
+    business_intelligence_software    = COALESCE(EXCLUDED.business_intelligence_software, companies.business_intelligence_software),
+    crm_platform                      = COALESCE(EXCLUDED.crm_platform, companies.crm_platform),
+    cloud                             = COALESCE(EXCLUDED.cloud, companies.cloud),
+    other                             = COALESCE(EXCLUDED.other, companies.other),
+    intent_data                       = COALESCE(EXCLUDED.intent_data, companies.intent_data),
     enrichment_source = COALESCE(EXCLUDED.enrichment_source, companies.enrichment_source),
     raw               = COALESCE(EXCLUDED.raw, companies.raw),
     updated_at        = now()
 """
 
 _UPSERT_TEMPLATE = (
-    "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s::jsonb)"
+    "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+    "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)"
 )
 
 
@@ -234,8 +282,14 @@ def _company_row(c):
         c.get('partner'),
         c.get('account_type'),
         c.get('employees'),
-        json.dumps(c.get('software') or {}),
-        json.dumps(c.get('intent') or {}),
+        c.get('epm_tool'),
+        c.get('erp_tool'),
+        c.get('data_tools'),
+        c.get('business_intelligence_software'),
+        c.get('crm_platform'),
+        c.get('cloud'),
+        c.get('other'),
+        c.get('intent_data'),
         c.get('enrichment_source'),
         json.dumps(c.get('raw')) if c.get('raw') is not None else None,
     )
@@ -402,14 +456,17 @@ def bootstrap_admin():
 # ---------------------------------------------------------------------------
 # Portal search
 # ---------------------------------------------------------------------------
-CATEGORY_COL = {
-    'EPM / CPM': 'EPM / CPM',
-    'ERP': 'ERP',
-    'Data Tools': 'Data Tools',
-    'Business Intelligence (BI)': 'Business Intelligence (BI)',
-    'CRM': 'CRM',
-    'Cloud': 'Cloud',
-}
+CATEGORY_COL = {t[3]: t[1] for t in CATEGORIES}
+
+
+def _category_column(category):
+    """Map a category label/model key to its db column, or return None."""
+    if category in MODELKEY_COL:
+        return MODELKEY_COL[category]
+    for col, label, _master, _key in CATEGORIES:
+        if label.lower() == category.lower():
+            return col
+    return None
 
 
 def search_companies(q='', industry='', category='', location='', partner='',
@@ -429,9 +486,10 @@ def search_companies(q='', industry='', category='', location='', partner='',
     if partner:
         clauses.append('partner ILIKE %s')
         params.append(f'%{partner}%')
-    if category and category in CATEGORY_COL:
-        clauses.append("software->>%s IS NOT NULL AND jsonb_array_length(software->%s) > 0")
-        params += [category, category]
+    col = _category_column(category) if category else None
+    if col:
+        clauses.append(f'({col} IS NOT NULL AND {col} <> %s)')
+        params.append('')
     if org_id:
         clauses.append('org_id = %s')
         params.append(org_id)

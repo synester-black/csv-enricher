@@ -37,15 +37,15 @@ SECTION_LABELS = [(0, 6, "TO BE PROVIDED"), (7, 47, "ACCOUNT DETAILS"), (48, 64,
 
 DEFAULT_LEAD_SOURCE = "uncontacted"
 
-# Master software category -> template column index
+# Master technology db-column -> template column index
 SOFTWARE_COLUMNS = {
-    "EPM / CPM": 21,               # V - EPM Tool
-    "ERP": 22,                     # W - ERP Tool
-    "Data Tools": 23,              # X - Data Tools
-    "Business Intelligence (BI)": 24,  # Y - BI Software
-    "CRM": 25,                     # Z - CRM Platform
-    "Cloud": 26,                   # AA - Cloud
-    "Other": 27,                   # AB - Other
+    "epm_tool": 21,                             # V - EPM Tool
+    "erp_tool": 22,                             # W - ERP Tool
+    "data_tools": 23,                           # X - Data Tools
+    "business_intelligence_software": 24,       # Y - BI Software
+    "crm_platform": 25,                         # Z - CRM Platform
+    "cloud": 26,                                # AA - Cloud
+    "other": 27,                                # AB - Other
 }
 
 
@@ -68,11 +68,16 @@ def _cn(d, def_keys):
 
 
 def build_template_row(account, enrichment=None):
-    """Return a 65-cell row from an account dict + enrichment dict."""
+    """Return a 65-cell row from an account dict + enrichment dict.
+
+    ``account`` carries the master-template columns (epm_tool, erp_tool, ...)
+    and ``enrichment`` may override with freshly computed values.
+    """
     enrichment = enrichment or {}
-    software = enrichment.get('software') or account.get('software') or {}
-    intent = enrichment.get('intent') or account.get('intent') or {}
     raw = account.get('raw') or {}
+    if enrichment.get('software'):
+        account = {**account, **enrichment['software']}
+    intent = enrichment.get('intent') or account.get('intent_data') or ''
     row = [""] * len(COLUMN_NAMES)
 
     def setc(i, val):
@@ -92,12 +97,14 @@ def build_template_row(account, enrichment=None):
     loc = account.get('location')
     if loc:
         setc(29, loc)                                          # AD Billing City
-    setc(20, json.dumps(intent) if intent else "")             # U Intent Data
+    setc(20, intent if isinstance(intent, str) else json.dumps(intent))  # U Intent Data
 
-    # -- Technology (from master database) --
-    for cat, col in SOFTWARE_COLUMNS.items():
-        setc(col, _join_multi(software.get(cat)))
-    setc(61, json.dumps(software) if software else "")         # BJ Technology Information
+    # -- Technology (from the master-template columns) --
+    for col, tcol in SOFTWARE_COLUMNS.items():
+        setc(tcol, _join_multi(account.get(col)))
+    software_dump = {k: (v.split('; ') if isinstance(v, str) else v)
+                     for k, v in account.items() if k in SOFTWARE_COLUMNS and v}
+    setc(61, json.dumps(software_dump) if software_dump else "")
 
     # -- Contact block (contact level is blank for company rows) --
     setc(49, enrichment.get('tier') or "")                     # AX Tier
