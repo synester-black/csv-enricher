@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CSV Enricher - Login</title>
+  <title>Vicit Data Intelligence - Login</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -35,8 +35,8 @@
 </head>
 <body>
   <div class="card">
-    <h1>CSV Enricher</h1>
-    <p class="subtitle">Enterprise Lead Enrichment Platform</p>
+    <h1>Vicit Data Intelligence</h1>
+    <p class="subtitle">Sign in to continue</p>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for cat, msg in messages %}
@@ -64,6 +64,9 @@
       <input type="hidden" name="g-recaptcha-response" id="recaptcha-token">
       <button type="submit" class="btn btn-primary">Sign In</button>
     </form>
+    <p class="signup" style="text-align:center;margin-top:16px;font-size:14px;color:#666;">
+      New here? <a href="{{ url_for('signup') }}" style="color:#1a1a2e;">Create an account</a>
+    </p>
   </div>
   {% if recaptcha_site_key %}
   <script src="https://www.google.com/recaptcha/api.js?render={{ recaptcha_site_key }}"></script>

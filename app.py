@@ -16,6 +16,19 @@ from flask import (
     session, flash, jsonify, send_file
 )
 
+import db as dbstore
+from db import (
+    CATEGORY_COL,
+    MODEL_SOFTWARE_CATEGORIES,
+    bootstrap_admin, company_detail, create_upload, create_user, delete_user,
+    get_user, list_users, lookup_companies, normalize_company_name,
+    save_records, search_companies, set_user_role, update_password,
+    upsert_companies,
+)
+from tabular import SUPPORTED_EXTENSIONS, read_tabular
+from template_exporter import build_template_row, write_template_xlsx
+from werkzeug.security import check_password_hash, generate_password_hash
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -26,49 +39,98 @@ USERS_FILE = BASE_DIR / 'users.json'
 UPLOAD_DIR.mkdir(exist_ok=True)
 PROCESSED_DIR.mkdir(exist_ok=True)
 
+import config as app_config
+
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'change-me-in-production')
+app.secret_key = app_config.SECRET_KEY
 
 # Ollama defaults -- overridable via Settings page
-OLLAMA_BASE_URL = os.environ.get('OLLAMA_BASE_URL', 'https://ollama.com')
-OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'gemma3:27b')
-OLLAMA_API_KEY = os.environ.get('OLLAMA_API_KEY', '')
+OLLAMA_BASE_URL = app_config.OLLAMA_BASE_URL
+OLLAMA_MODEL = app_config.OLLAMA_MODEL
+OLLAMA_API_KEY = app_config.OLLAMA_API_KEY
 
 # Microsoft Entra ID SSO defaults
-MICROSOFT_CLIENT_ID = os.environ.get('MICROSOFT_CLIENT_ID', '')
-MICROSOFT_CLIENT_SECRET = os.environ.get('MICROSOFT_CLIENT_SECRET', '')
-MICROSOFT_TENANT_ID = os.environ.get('MICROSOFT_TENANT_ID', '')
-MICROSOFT_ALLOWED_DOMAIN = os.environ.get('MICROSOFT_ALLOWED_DOMAIN', '')
+MICROSOFT_CLIENT_ID = app_config.MICROSOFT_CLIENT_ID
+MICROSOFT_CLIENT_SECRET = app_config.MICROSOFT_CLIENT_SECRET
+MICROSOFT_TENANT_ID = app_config.MICROSOFT_TENANT_ID
+MICROSOFT_ALLOWED_DOMAIN = app_config.MICROSOFT_ALLOWED_DOMAIN
 
 # reCAPTCHA defaults
-RECAPTCHA_SITE_KEY = os.environ.get('RECAPTCHA_SITE_KEY', '')
-RECAPTCHA_SECRET_KEY = os.environ.get('RECAPTCHA_SECRET_KEY', '')
+RECAPTCHA_SITE_KEY = app_config.RECAPTCHA_SITE_KEY
+RECAPTCHA_SECRET_KEY = app_config.RECAPTCHA_SECRET_KEY
+
+# Ensure the database schema exists (idempotent; non-fatal if DB is down).
+try:
+    dbstore.init_schema()
+    bootstrap_admin()
+except Exception as e:
+    print(f'DB init warning: {e}')
 
 # ---------------------------------------------------------------------------
 # In-memory stores
 # ---------------------------------------------------------------------------
 processing_status = {}            # task_id -> dict of progress info
 results_store = {}                # task_id -> path of output CSV
+template_store = {}               # task_id -> path of template XLSX
 csv_previews = {}                 # task_id -> {'header': [...], 'rows': [[...], ...]}
 column_mappings = {}              # task_id -> {'company': 7, 'email': 1, ...}
 
 # ---------------------------------------------------------------------------
-# User helpers
+# User helpers (backed by Postgres; legacy users.json is used only as a
+# fallback migration source on first boot)
 # ---------------------------------------------------------------------------
-def load_users():
+def _default_admin_user():
     try:
         with open(USERS_FILE) as f:
-            return json.load(f)
+            data = json.load(f)
     except Exception:
-        return {"admin": {"password": "admin123", "name": "Admin"}}
+        return None
+    admin = data.get('admin')
+    if admin and isinstance(admin, dict):
+        return {'username': 'admin', 'password': admin.get('password', 'admin123'),
+                'name': admin.get('name', 'Admin')}
+    return None
+
+
+def load_users():
+    """Return a dict in the legacy shape for the login flow."""
+    db_users = list_users()
+    if not db_users:
+        legacy = _default_admin_user()
+        if legacy:
+            create_user(legacy['username'],
+                        password_hash=generate_password_hash(legacy['password']),
+                        name=legacy['name'], role='admin')
+            db_users = list_users()
+    return {u['username']: {
+        'name': u['name'] or u['username'],
+        'email': u['email'],
+        'role': u['role'],
+        'sso': u['sso'],
+        'password_hash': u.get('password_hash'),
+    } for u in db_users if u.get('username')}
+
 
 def save_users(users):
-    with open(USERS_FILE, 'w') as f:
-        json.dump(users, f, indent=2)
+    """No-op keeper; user mutations go through the DB functions directly."""
+    pass
+
 
 # ---------------------------------------------------------------------------
-# Auth decorator
+# Auth helpers
 # ---------------------------------------------------------------------------
+def set_session_from_user(username, name=None, sso=False):
+    session['user'] = username
+    session['name'] = name or username
+    session['sso_user'] = sso
+    user = get_user(username=username)
+    session['role'] = (user or {}).get('role', 'user')
+
+
+def current_role():
+    return session.get('role', 'user')
+
+
 def login_required(f):
     @wraps(f)
     def decorated(*a, **kw):
@@ -77,6 +139,19 @@ def login_required(f):
         return f(*a, **kw)
     return decorated
 
+
+def admin_required(f):
+    @wraps(f)
+    def decorated(*a, **kw):
+        if 'user' not in session:
+            return redirect(url_for('login'))
+        if session.get('role') != 'admin':
+            flash('Admin access required', 'error')
+            return redirect(url_for('search'))
+        return f(*a, **kw)
+    return decorated
+
+
 # ---------------------------------------------------------------------------
 # Routes – Auth
 # ---------------------------------------------------------------------------
@@ -84,7 +159,6 @@ def login_required(f):
 def login():
     error = None
     if request.method == 'POST':
-        users = load_users()
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
 
@@ -106,10 +180,12 @@ def login():
                     error = 'Security verification failed. Please try again.'
 
         if not error:
-            if username in users and users[username]['password'] == password:
-                session['user'] = username
+            user = get_user(username=username)
+            if user and user.get('password_hash') and check_password_hash(
+                    user['password_hash'], password):
+                set_session_from_user(user['username'], user.get('name'))
                 flash('Logged in', 'success')
-                return redirect(url_for('upload'))
+                return redirect(url_for('search'))
             else:
                 error = 'Invalid credentials'
 
@@ -119,9 +195,43 @@ def login():
     return render_template('login.html',
         recaptcha_site_key=session.get('recaptcha_site_key', RECAPTCHA_SITE_KEY))
 
+
+@app.route('/signup', methods=['GET', 'POST'])
+def signup():
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        email = request.form.get('email', '').strip()
+        name = request.form.get('name', '').strip()
+        password = request.form.get('password', '')
+        confirm = request.form.get('confirm', '')
+
+        if not username or not password:
+            flash('Username and password are required', 'error')
+        elif len(password) < 6:
+            flash('Password must be at least 6 characters', 'error')
+        elif password != confirm:
+            flash('Passwords do not match', 'error')
+        elif get_user(username=username) or get_user(email=email):
+            flash('That username or email is already registered', 'error')
+        else:
+            try:
+                create_user(username, password_hash=generate_password_hash(password),
+                            name=name or username, role='user', email=email or None)
+                set_session_from_user(username, name or username)
+                flash('Account created. Welcome!', 'success')
+                return redirect(url_for('search'))
+            except Exception as e:
+                print(f'Signup error: {e}')
+                flash('Could not create account', 'error')
+    return render_template('signup.html')
+
+
 @app.route('/logout')
 def logout():
     session.pop('user', None)
+    session.pop('name', None)
+    session.pop('role', None)
+    session.pop('sso_user', None)
     return redirect(url_for('login'))
 
 # ---------------------------------------------------------------------------
@@ -170,6 +280,12 @@ def settings():
 # Routes – Upload
 # ---------------------------------------------------------------------------
 @app.route('/', methods=['GET'])
+def landing():
+    if 'user' in session:
+        return redirect(url_for('search'))
+    return render_template('landing.html')
+
+@app.route('/enrich', methods=['GET'])
 @login_required
 def upload():
     return render_template('upload.html')
@@ -184,34 +300,33 @@ def handle_upload():
     if not f.filename:
         flash('No file selected', 'error')
         return redirect(url_for('upload'))
-    if not f.filename.endswith('.csv'):
-        flash('Only CSV files accepted', 'error')
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in SUPPORTED_EXTENSIONS:
+        flash('Only CSV, XLSX or XLS files accepted', 'error')
         return redirect(url_for('upload'))
 
     # Save uploaded file
     task_id = str(uuid.uuid4())
-    in_path = UPLOAD_DIR / f'{task_id}_input.csv'
+    in_path = UPLOAD_DIR / f'{task_id}_input{ext}'
     f.save(in_path)
 
     # Read columns and preview rows
-    with open(in_path, 'r', encoding='utf-8-sig') as cf:
-        reader = csv.reader(cf)
-        try:
-            header = next(reader)
-        except StopIteration:
-            flash('CSV file is empty', 'error')
-            return redirect(url_for('upload'))
-        preview_rows = []
-        for _ in range(5):
-            try:
-                preview_rows.append(next(reader))
-            except StopIteration:
-                break
+    try:
+        header, rows = read_tabular(str(in_path))
+    except Exception as e:
+        flash(f'Could not read file: {e}', 'error')
+        return redirect(url_for('upload'))
+    if not header:
+        flash('File is empty', 'error')
+        return redirect(url_for('upload'))
+    preview_rows = rows[:5]
     # Store preview for mapping page
     csv_previews[task_id] = {
         'header': header,
         'rows': preview_rows,
         'filepath': str(in_path),
+        'filename': f.filename,
+        'file_format': ext.lstrip('.').upper(),
     }
 
     return redirect(url_for('mapping', task_id=task_id))
@@ -291,7 +406,8 @@ def mapping(task_id):
 
         threading.Thread(
             target=process_csv,
-            args=(task_id, preview['filepath'], ollama_cfg, mapping),
+            args=(task_id, preview['filepath'], ollama_cfg, mapping, preview.get('filename'),
+                  preview.get('file_format'), preview.get('header')),
             daemon=True,
         ).start()
 
@@ -365,6 +481,21 @@ def download(task_id):
         as_attachment=True,
         download_name='enriched_leads.csv',
         mimetype='text/csv',
+    )
+
+
+@app.route('/download/template/<task_id>')
+@login_required
+def download_template(task_id):
+    out_path = template_store.get(task_id)
+    if not out_path or not os.path.exists(out_path):
+        flash('Template export not ready or expired', 'error')
+        return redirect(url_for('upload'))
+    return send_file(
+        out_path,
+        as_attachment=True,
+        download_name='data_request.xlsx',
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
 
 # ---------------------------------------------------------------------------
@@ -513,15 +644,12 @@ def authorize_microsoft():
                 return redirect(url_for('login'))
 
         # Auto-create local user on first login
-        users = load_users()
-        if email not in users:
-            users[email] = {'password': None, 'name': name, 'sso': True}
-            save_users(users)
-
-        session['user'] = email
-        session['sso_user'] = True
+        if not get_user(email=email):
+            create_user(email, password_hash=None, name=name, role='user',
+                        email=email, sso=True)
+        set_session_from_user(email, name, sso=True)
         flash(f'Signed in as {name}', 'success')
-        return redirect(url_for('upload'))
+        return redirect(url_for('search'))
     except Exception as e:
         flash(f'SSO login failed: {e}', 'error')
         return redirect(url_for('login'))
@@ -944,7 +1072,17 @@ def validate_row_deterministic(row_dict, regions=None):
 # ---------------------------------------------------------------------------
 # Main processing pipeline (runs in background thread)
 # ---------------------------------------------------------------------------
-def process_csv(task_id, input_path, ollama_cfg=None, column_map=None):
+def _software_complete(sw):
+    """True when every model software category is already populated (DB hit)."""
+    return bool(sw) and all(sw.get(cat) for cat in MODEL_SOFTWARE_CATEGORIES)
+
+
+def _has_values(d):
+    return bool(d) and any(v for v in d.values() if v)
+
+
+def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
+                filename=None, file_format=None, upload_header=None):
     status = {
         'state': 'starting',
         'total_companies': 0,
@@ -978,11 +1116,8 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None):
     validation_regions = [r.strip() for r in ollama_cfg.get('validation_regions', 'uk').split(',') if r.strip()]
 
     try:
-        # Read input CSV
-        with open(input_path, 'r', encoding='utf-8-sig') as f:
-            reader = csv.reader(f)
-            header = next(reader)
-            rows = list(reader)
+        # Read input (CSV, XLSX or XLS)
+        header, rows = read_tabular(input_path)
 
         status['total_rows'] = len(rows)
         status['state'] = 'reading'
@@ -1020,6 +1155,12 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None):
         if 'company' not in col_map:
             raise ValueError('Could not find "Account: Account Name" column in CSV')
 
+        # Register the upload so raw rows can be persisted later
+        try:
+            create_upload(task_id, filename, file_format, upload_header or header, len(rows), column_map)
+        except Exception as e:
+            print(f'DB upload warning ({task_id}): {e}')
+
         # Group by company
         companies = {}
         for row in rows:
@@ -1033,9 +1174,27 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None):
         status['total_companies'] = len(unique_companies)
         status['state'] = 'processing'
 
-        # Phase 1 & 2: Software + Intent per company
+        # DB-first resolution: pull any known enrichment from Postgres.
+        normalized_by_company = {c: normalize_company_name(c) for c in unique_companies}
+        db_hits = {}
+        try:
+            db_hits = lookup_companies(normalized_names=set(normalized_by_company.values()))
+        except Exception as e:
+            print(f'DB lookup warning ({task_id}): {e}')
+
+        domain_by_company = {}
+        db_software_by_company = {}
+        db_intent_by_company = {}
+        for c in unique_companies:
+            hit = db_hits.get(normalized_by_company[c])
+            db_software_by_company[c] = (hit.get('software') or {}) if hit else {}
+            db_intent_by_company[c] = (hit.get('intent') or {}) if hit else {}
+            domain_by_company[c] = ((hit.get('domain') if hit else '') or get_company_domain(c))
+
+        # Phase 1 & 2: Software + Intent per company (DB values win, model fills gaps)
         company_software = {}
         company_intent = {}
+        source_map = {}
 
         for idx, company in enumerate(unique_companies):
             status['current_company'] = idx + 1
@@ -1043,33 +1202,48 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None):
             status['progress_pct'] = int((idx / len(unique_companies)) * 60)
             processing_status[task_id] = status
 
-            domain = get_company_domain(company)
+            domain = domain_by_company[company]
+            base_sw = dict(db_software_by_company.get(company) or {})
+            base_intent = db_intent_by_company.get(company) or {}
 
-            # Prompt 1: Software
-            status['software_phase'] = f'processing ({company})'
-            processing_status[task_id] = status
-            sw_prompt = software_prompt_tpl.format(company_name=company, company_domain=domain)
-            sw_raw = _call_ollama(sw_prompt, cfg=ollama_cfg)
-            sw_data = _extract_json(sw_raw)
-            if sw_data:
-                company_software[company] = sw_data
-            else:
-                company_software[company] = {}
+            model_used = False
+            swit = [_software_complete(base_sw), _has_values(base_intent)]
+
+            # Prompt 1: Software (only for missing categories / new companies)
+            sw_final = dict(base_sw)
+            if not swit[0]:
+                status['software_phase'] = f'processing ({company})'
+                processing_status[task_id] = status
+                sw_prompt = software_prompt_tpl.format(company_name=company, company_domain=domain)
+                sw_raw = _call_ollama(sw_prompt, cfg=ollama_cfg)
+                sw_data = _extract_json(sw_raw) or {}
+                for k, v in sw_data.items():
+                    if not sw_final.get(k):
+                        sw_final[k] = v if isinstance(v, list) else ([v] if v else [])
+                model_used = True
+            company_software[company] = sw_final
             status['software_phase'] = 'done'
 
-            # Prompt 2: Intent
-            status['intent_phase'] = f'processing ({company})'
-            processing_status[task_id] = status
-            in_prompt = intent_prompt_tpl.format(company_name=company, company_domain=domain)
-            in_raw = _call_ollama(in_prompt, cfg=ollama_cfg)
-            in_data = _extract_json(in_raw)
-            if in_data and 'Intent' in in_data:
-                company_intent[company] = in_data['Intent']
-            elif in_data:
-                company_intent[company] = in_data
-            else:
-                company_intent[company] = {}
+            # Prompt 2: Intent (only when not already available)
+            intent_final = base_intent
+            if not swit[1]:
+                status['intent_phase'] = f'processing ({company})'
+                processing_status[task_id] = status
+                in_prompt = intent_prompt_tpl.format(company_name=company, company_domain=domain)
+                in_raw = _call_ollama(in_prompt, cfg=ollama_cfg)
+                in_data = _extract_json(in_raw) or {}
+                intent_final = in_data.get('Intent', in_data) if in_data else {}
+                model_used = True
+            company_intent[company] = intent_final
             status['intent_phase'] = 'done'
+
+            src = 'model'
+            if base_sw or base_intent and not model_used:
+                src = 'db'
+            elif (base_sw or (base_intent and _has_values(base_intent))) and model_used:
+                src = 'mixed'
+            source_map[company] = src
+            status['enrichment_source'] = src
 
         # Phase 3: Tier classification (batch LLM)
         status['software_phase'] = 'complete'
@@ -1116,8 +1290,10 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None):
         processing_status[task_id] = status
 
         # Build output
-        new_header = list(header) + ['Software', 'Intent', 'Tier (Classified)', 'To be Removed', 'Validation Issues']
+        new_header = list(header) + ['Software', 'Intent', 'Tier (Classified)', 'To be Removed', 'Validation Issues', 'Enrichment Source']
         output_rows = []
+        db_records = []
+        company_tiers = {}
 
         for idx, row in enumerate(rows):
             status['current_row'] = idx + 1
@@ -1165,6 +1341,8 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None):
             new_row.append(tier_value)
             new_row.append(v_result['to_be_removed'])
             new_row.append(v_result['issues'])
+            source = source_map.get(company, 'model')
+            new_row.append(source)
 
             # Clean phone columns
             mobile_idx = col_map.get('mobile')
@@ -1175,6 +1353,22 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None):
                 new_row[mobile_o_idx] = v_result['mobile_other_cleaned']
 
             output_rows.append(new_row)
+            company_tiers.setdefault(company, []).append(tier_value)
+
+            # Capture the raw row + computed output for persistence
+            db_records.append({
+                'row_index': idx,
+                'company_normalized': normalized_by_company.get(company, ''),
+                'data': dict(zip(header, [str(x) for x in row])) if len(header) else {},
+                'output': {
+                    'software': sw,
+                    'intent': it,
+                    'tier': tier_value,
+                    'to_be_removed': v_result['to_be_removed'],
+                    'validation_issues': v_result['issues'],
+                    'enrichment_source': source,
+                },
+            })
 
         # Write output
         out_path = PROCESSED_DIR / f'{task_id}_output.csv'
@@ -1182,6 +1376,61 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None):
             writer = csv.writer(f)
             writer.writerow(new_header)
             writer.writerows(output_rows)
+
+        # Data-request template export (one row per company)
+        def _rep_tier(tiers):
+            best = None
+            for t in tiers:
+                m = re.match(r'(\d+)', str(t))
+                n = int(m.group(1)) if m else None
+                if n and (best is None or n < best):
+                    best = n
+            return f'Tier {best}' if best else ''
+
+        template_rows = []
+        for c in unique_companies:
+            hit = db_hits.get(normalized_by_company[c]) or {}
+            account = {
+                'account_name': c,
+                'website_url': hit.get('website_url'),
+                'linkedin_url': hit.get('linkedin_url'),
+                'industry': hit.get('industry'),
+                'location': hit.get('location'),
+                'account_type': hit.get('account_type'),
+                'partner': hit.get('partner'),
+                'software': company_software.get(c) or {},
+                'intent': company_intent.get(c) or {},
+                'raw': hit.get('raw'),
+            }
+            enrichment = {
+                'software': company_software.get(c) or {},
+                'intent': company_intent.get(c) or {},
+                'tier': _rep_tier(company_tiers.get(c, [])),
+                'source': source_map.get(c, 'model'),
+            }
+            template_rows.append(build_template_row(account, enrichment))
+
+        template_path = PROCESSED_DIR / f'{task_id}_data_request.xlsx'
+        try:
+            write_template_xlsx(template_rows, str(template_path))
+            template_store[task_id] = str(template_path)
+        except Exception as e:
+            print(f'Template export warning ({task_id}): {e}')
+
+        # Write computed enrichment back to the DB (companies cache)
+        writeback = [{
+            'normalized_name': normalized_by_company[c],
+            'account_name': c,
+            'domain': domain_by_company.get(c),
+            'software': company_software.get(c) or {},
+            'intent': company_intent.get(c) or {},
+            'enrichment_source': source_map.get(c, 'model'),
+        } for c in unique_companies if company_software.get(c) or company_intent.get(c)]
+        try:
+            upsert_companies(writeback)
+            save_records(task_id, db_records)
+        except Exception as e:
+            print(f'DB persist warning for {task_id}: {e}')
 
         results_store[task_id] = str(out_path)
         status['state'] = 'complete'
@@ -1202,34 +1451,151 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None):
 # User management
 # ---------------------------------------------------------------------------
 @app.route('/users', methods=['GET', 'POST'])
-@login_required
+@admin_required
 def manage_users():
-    users = load_users()
     if request.method == 'POST':
         action = request.form.get('action', '')
         if action == 'add':
             u = request.form.get('username', '').strip()
             p = request.form.get('password', '')
             n = request.form.get('name', '').strip()
+            email = request.form.get('email', '').strip()
             if u and p:
-                users[u] = {'password': p, 'name': n or u}
-                save_users(users)
+                create_user(u, password_hash=generate_password_hash(p),
+                            name=n or u, role='user', email=email or None)
                 flash(f'User {u} added', 'success')
         elif action == 'delete':
             u = request.form.get('username', '').strip()
-            if u in users and u != request.form.get('current_user'):
-                del users[u]
-                save_users(users)
+            if u and u != session.get('user', ''):
+                delete_user(u)
                 flash(f'User {u} deleted', 'success')
+        elif action == 'role':
+            u = request.form.get('username', '').strip()
+            role = request.form.get('role', 'user')
+            if u and u != session.get('user'):
+                set_user_role(u, role)
+                flash(f'{u} role updated to {role}', 'success')
         elif action == 'change_password':
             u = session.get('user', '')
             old = request.form.get('old_password', '')
             new = request.form.get('new_password', '')
-            if u in users and users[u]['password'] == old and new:
-                users[u]['password'] = new
-                save_users(users)
+            me = get_user(username=u)
+            if me and me['password_hash'] and check_password_hash(me['password_hash'], old) and new:
+                update_password(u, generate_password_hash(new))
                 flash('Password changed', 'success')
+            else:
+                flash('Old password incorrect', 'error')
+    users = list_users()
     return render_template('users.html', users=users, current_user=session.get('user', ''))
+
+
+# ---------------------------------------------------------------------------
+# Data intelligence portal (self-serve search over the master data)
+# ---------------------------------------------------------------------------
+@app.route('/search', methods=['GET'])
+@login_required
+def search():
+    page = request.args.get('page', 1, type=int)
+    q = request.args.get('q', '').strip()
+    industry = request.args.get('industry', '').strip()
+    category = request.args.get('category', '').strip()
+    location = request.args.get('location', '').strip()
+    partner = request.args.get('partner', '').strip()
+
+    results, total = [], 0
+    if any([q, industry, category, location, partner]):
+        rows, total = search_companies(q=q or None, industry=industry or None,
+                                       category=category or None,
+                                       location=location or None,
+                                       partner=partner or None,
+                                       page=page)
+        results = rows
+
+    if request.args.get('export'):
+        rows, _ = search_companies(q=q or None, industry=industry or None,
+                                   category=category or None,
+                                   location=location or None,
+                                   partner=partner or None, page=1, per_page=10000)
+        return _export_search(rows)
+
+    return render_template('search.html', results=results, total=total, page=page,
+                           per_page=50, categories=CATEGORY_COL,
+                           q=q, industry=industry, category=category,
+                           location=location, partner=partner)
+
+
+def _export_search(rows):
+    """Stream the current search results as a data-request template workbook."""
+    from io import BytesIO
+
+    template_rows = []
+    for hit in rows:
+        account = {
+            'account_name': hit.get('account_name'),
+            'website_url': hit.get('website_url'),
+            'linkedin_url': hit.get('linkedin_url'),
+            'industry': hit.get('industry'),
+            'location': hit.get('location'),
+            'account_type': hit.get('account_type'),
+            'partner': hit.get('partner'),
+            'software': hit.get('software') or {},
+            'intent': hit.get('intent') or {},
+            'raw': hit.get('raw'),
+        }
+        enrichment = {
+            'software': hit.get('software') or {},
+            'intent': hit.get('intent') or {},
+            'tier': '',
+            'source': hit.get('enrichment_source') or 'db',
+        }
+        template_rows.append(build_template_row(account, enrichment))
+
+    buf = BytesIO()
+    write_template_xlsx(template_rows, buf)
+    buf.seek(0)
+    return send_file(
+        buf, as_attachment=True, download_name='data_request.xlsx',
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@app.route('/company/<normalized_name>')
+@login_required
+def company(normalized_name):
+    hit = company_detail(normalized_name)
+    if not hit:
+        flash('Company not found', 'error')
+        return redirect(url_for('search'))
+    return render_template('company.html', c=hit)
+
+
+@app.route('/admin', methods=['GET', 'POST'])
+@admin_required
+def admin():
+    result = None
+    if request.method == 'POST':
+        workbook = request.files.get('workbook')
+        if workbook and workbook.filename:
+            wb_path = UPLOAD_DIR / f'ingest_{uuid.uuid4()}.xlsx'
+            workbook.save(wb_path)
+            try:
+                from openpyxl import load_workbook
+                from ingest_master import build_companies, col_index
+                from db import upsert_companies
+
+                wb = load_workbook(str(wb_path), read_only=True, data_only=True)
+                sheet = next(iter(wb.sheetnames), None)
+                ws = wb[sheet]
+                it = ws.iter_rows(values_only=True)
+                header = [str(h).strip() for h in (next(it, None) or [])]
+                idx = col_index(header)
+                compt = build_companies(list(it), idx)
+                wb.close()
+                written = upsert_companies(compt)
+                result = f'Ingested {written} companies'
+            except Exception as e:
+                result = f'Error: {e}'
+    return render_template('admin.html', result=result)
+
 
 # ---------------------------------------------------------------------------
 # Run

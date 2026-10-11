@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CSV Enricher - Upload</title>
+  <title>Vicit Data Intelligence - Upload</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -36,18 +36,22 @@
 </head>
 <body>
   <div class="nav">
-    <span><strong>CSV Enricher</strong></span>
+    <span><strong>Vicit Data Intelligence</strong></span>
     <span>
       <span class="user">{{ session.user }}</span>
+      <a href="{{ url_for('search') }}">Search</a>
       <a href="{{ url_for('settings') }}">Settings</a>
+      {% if session.role == 'admin' %}
+      <a href="{{ url_for('admin') }}">Admin</a>
       <a href="{{ url_for('manage_users') }}">Users</a>
+      {% endif %}
       <a href="{{ url_for('logout') }}">Logout</a>
     </span>
   </div>
   <div class="container">
     <div class="card">
-      <h1>Upload Leads CSV</h1>
-      <p class="sub">Upload a CSV with the same format as before. The app will enrich it with Software stack, Intent, Tier classification, and validation.</p>
+      <h1>Upload Leads (CSV / XLSX / XLS)</h1>
+      <p class="sub">Upload a CSV or Excel file. The app enriches it with Software stack, Intent, Tier classification, and validation — resolving known companies from the database first, then the AI model for the rest.</p>
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% for cat, msg in messages %}
           <div class="flash {{ cat }}">{{ msg }}</div>
@@ -56,10 +60,10 @@
       <form method="POST" action="{{ url_for('handle_upload') }}" enctype="multipart/form-data" id="upload-form">
         <div class="drop-zone" id="drop-zone">
           <div class="icon">&#128196;</div>
-          <p>Drag & drop your CSV here, or click to browse</p>
+          <p>Drag & drop your CSV or Excel file here, or click to browse</p>
           <div class="filename" id="filename"></div>
         </div>
-        <input type="file" name="file" id="file-input" accept=".csv" style="display:none">
+        <input type="file" name="file" id="file-input" accept=".csv,.xlsx,.xlsm,.xls" style="display:none">
         <button type="submit" id="submit-btn">Start Processing</button>
       </form>
     </div>

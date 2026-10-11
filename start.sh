@@ -18,7 +18,7 @@ if [ "$MODE" = "prod" ]; then
     echo "Access at http://localhost:5000"
     export OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-https://ollama.com}"
     export OLLAMA_MODEL="${OLLAMA_MODEL:-gemma3:27b}"
-    export OLLAMA_API_KEY="${OLLAMA_API_KEY:-6098bb9c2e4e4937bd784a8907357590.Zf7g2Sc3BNqB772039wUeY8j}"
+    export OLLAMA_API_KEY="${OLLAMA_API_KEY:-}"
     exec gunicorn --bind 0.0.0.0:5000 --workers 4 --timeout 300 app:app
 fi
 
@@ -34,5 +34,5 @@ echo "================================="
 export FLASK_DEBUG=1
 export OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-https://ollama.com}"
 export OLLAMA_MODEL="${OLLAMA_MODEL:-gemma3:27b}"
-export OLLAMA_API_KEY="${OLLAMA_API_KEY:-6098bb9c2e4e4937bd784a8907357590.Zf7g2Sc3BNqB772039wUeY8j}"
+export OLLAMA_API_KEY="${OLLAMA_API_KEY:-}"
 exec python3 app.py

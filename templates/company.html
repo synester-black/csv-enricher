@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ c.account_name or c.normalized_name }}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+           background: #f0f2f5; min-height: 100vh; }
+    .nav { background: #1a1a2e; color: #fff; padding: 14px 24px; display: flex;
+           align-items: center; justify-content: space-between; font-size: 14px; }
+    .nav a { color: #a0aec0; text-decoration: none; margin-left: 18px; }
+    .nav a:hover { color: #fff; }
+    .container { max-width: 960px; margin: 40px auto; padding: 0 24px; }
+    .card { background: #fff; border-radius: 12px; padding: 28px; box-shadow: 0 2px 12px rgba(0,0,0,.08); }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    .sub { color: #666; margin-bottom: 20px; font-size: 14px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; vertical-align: top; }
+    th { width: 220px; background: #f7f7f9; color: #333; }
+    .pill { display: inline-block; background: #eef0fa; color: #1a1a2e; border-radius: 10px;
+            padding: 2px 8px; margin: 2px; font-size: 12px; }
+    code { background: #f5f5f7; padding: 2px 6px; border-radius: 4px; font-size: 12px; word-break: break-word; }
+    a.back { color: #1a1a2e; text-decoration: none; display: inline-block; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  <div class="nav">
+    <span><strong>Vicit Data Intelligence</strong></span>
+    <span><a href="{{ url_for('search') }}">Search</a><a href="{{ url_for('logout') }}">Logout</a></span>
+  </div>
+  <div class="container">
+    <a class="back" href="{{ url_for('search') }}">&larr; Back to search</a>
+    <div class="card">
+      <h1>{{ c.account_name or c.normalized_name }}</h1>
+      <div class="sub">
+        {% if c.industry %}{{ c.industry }}{% endif %}
+        {% if c.location %} &middot; {{ c.location }}{% endif %}
+        {% if c.domain %} &middot; {{ c.domain }}{% endif %}
+        {% if c.partner %} &middot; Partner: {{ c.partner }}{% endif %}
+      </div>
+      <table>
+        {% if c.account_id %}<tr><th>Account ID</th><td>{{ c.account_id }}</td></tr>{% endif %}
+        {% if c.website_url %}<tr><th>Website</th><td><a href="{{ c.website_url }}">{{ c.website_url }}</a></td></tr>{% endif %}
+        {% if c.linkedin_url %}<tr><th>LinkedIn</th><td><a href="{{ c.linkedin_url }}">{{ c.linkedin_url }}</a></td></tr>{% endif %}
+        {% if c.account_type %}<tr><th>Account Type</th><td>{{ c.account_type }}</td></tr>{% endif %}
+        {% if c.employee %}<tr><th>Employees</th><td>{{ c.employee }}</td></tr>{% endif %}
+        <tr><th>Technology</th><td>
+          {% for cat, vals in (c.software or {}).items() %}
+            {% if vals %}<span class="pill"><strong>{{ cat }}</strong>: {{ vals|join(', ') }}</span>{% endif %}
+          {% endfor %}
+        </td></tr>
+        {% if c.intent and (c.intent.values()|select|list) %}
+        <tr><th>Intent</th><td><code>{{ c.intent }}</code></td></tr>
+        {% endif %}
+        {% if c.raw %}
+        <tr><th>Raw Record</th><td><code>{{ c.raw }}</code></td></tr>
+        {% endif %}
+      </table>
+    </div>
+  </div>
+</body>
+</html>
