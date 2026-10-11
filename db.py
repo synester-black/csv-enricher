@@ -512,3 +512,33 @@ def search_companies(q='', industry='', category='', location='', partner='',
 def company_detail(normalized_name):
     hits = lookup_companies(normalized_names=[normalized_name])
     return hits.get(normalized_name)
+
+
+def db_stats():
+    """Header stats for the dashboard/search pages."""
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT count(*),"
+                " count(DISTINCT industry),"
+                " count(*) FILTER (WHERE epm_tool IS NOT NULL OR erp_tool IS NOT NULL"
+                "   OR data_tools IS NOT NULL OR business_intelligence_software IS NOT NULL"
+                "   OR crm_platform IS NOT NULL OR cloud IS NOT NULL OR other IS NOT NULL)"
+                " FROM companies")
+            total, industries, with_tech = cur.fetchone()
+            cur.execute("SELECT count(*) FROM users")
+            users = cur.fetchone()[0]
+    except Exception:
+        return {'companies': 0, 'industries': 0, 'tech_companies': 0, 'users': 0}
+    return {'companies': total, 'industries': industries or 0,
+            'tech_companies': with_tech or 0, 'users': users}
+
+
+def distinct_industries():
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT industry FROM companies "
+                        "WHERE industry IS NOT NULL AND industry <> '' ORDER BY industry")
+            return [r[0] for r in cur.fetchall()]
+    except Exception:
+        return []

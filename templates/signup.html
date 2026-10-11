@@ -3,50 +3,42 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sign Up - Market Intelligence</title>
+  <title>Create account — Vicit Data Intelligence</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-           background: #f0f2f5; min-height: 100vh; }
-    .container { max-width: 420px; margin: 60px auto; padding: 0 20px; }
-    .card { background: #fff; border-radius: 12px; padding: 40px; box-shadow: 0 2px 12px rgba(0,0,0,.08); }
-    h1 { font-size: 22px; margin-bottom: 8px; }
-    p.sub { color: #666; margin-bottom: 24px; font-size: 14px; }
-    label { display: block; font-size: 13px; color: #555; margin: 14px 0 6px; }
-    input { width: 100%; padding: 11px 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
-    button { width: 100%; padding: 12px; background: #1a1a2e; color: #fff; border: none;
-             border-radius: 6px; font-size: 15px; cursor: pointer; margin-top: 22px; }
-    button:hover { background: #16213e; }
-    .flash { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
-    .flash.success { background: #d4edda; color: #155724; }
-    .flash.error { background: #f8d7da; color: #721c24; }
-    .link { text-align: center; margin-top: 18px; font-size: 14px; color: #666; }
-    .link a { color: #1a1a2e; }
+    body { display: flex; align-items: center; justify-content: center; background: var(--grad); }
+    .auth-card { width: 430px; max-width: 92vw; padding: 38px; }
+    .brand-lockup { display:flex; flex-direction:column; align-items:center; margin-bottom: 8px; }
+    .brand-lockup img { height: 44px; margin-bottom: 6px; }
+    .auth-card h1 { font-size: 22px; text-align:center; }
+    .auth-card .sub { text-align:center; color: var(--muted); font-size: 14px; margin: 4px 0 10px; }
+    .auth-card label { margin-top: 12px; }
+    .btn-block { width: 100%; justify-content: center; }
+    .alt { text-align:center; margin-top: 18px; font-size: 14px; color: var(--muted); }
+    .alt a { color: var(--accent); font-weight:600; }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="card">
-      <h1>Create an Account</h1>
-      <p class="sub">Search the technology & market intelligence database for potential companies.</p>
-      {% with messages = get_flashed_messages(with_categories=true) %}
-        {% for cat, msg in messages %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}
-      {% endwith %}
-      <form method="POST" action="{{ url_for('signup') }}">
-        <label>Username</label>
-        <input type="text" name="username" required autofocus>
-        <label>Email (optional)</label>
-        <input type="email" name="email">
-        <label>Full Name</label>
-        <input type="text" name="name">
-        <label>Password</label>
-        <input type="password" name="password" required>
-        <label>Confirm Password</label>
-        <input type="password" name="confirm" required>
-        <button type="submit">Create Account</button>
-      </form>
-      <div class="link">Already have an account? <a href="{{ url_for('login') }}">Log in</a></div>
+  <div class="card auth-card">
+    <div class="brand-lockup">
+      <img src="{{ url_for('static', filename='vicit.png') }}" alt="Vicit">
+      <h1>Create an account</h1>
     </div>
+    <p class="sub">Search the technology &amp; market intelligence database.</p>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for cat, msg in messages %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}
+    {% endwith %}
+
+    <form method="POST" action="{{ url_for('signup') }}">
+      <label>Username</label><input type="text" name="username" required autofocus>
+      <label>Email (optional)</label><input type="email" name="email">
+      <label>Full Name</label><input type="text" name="name">
+      <label>Password</label><input type="password" name="password" required>
+      <label>Confirm Password</label><input type="password" name="confirm" required>
+      <button type="submit" class="btn btn-accent btn-block" style="margin-top:22px;">Create Account</button>
+    </form>
+    <p class="alt">Already have an account? <a href="{{ url_for('login') }}">Log in</a></p>
   </div>
 </body>
 </html>

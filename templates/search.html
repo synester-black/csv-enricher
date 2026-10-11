@@ -1,89 +1,53 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Search - Market Intelligence</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-           background: #f0f2f5; min-height: 100vh; }
-    .nav { background: #1a1a2e; color: #fff; padding: 14px 24px; display: flex;
-           align-items: center; justify-content: space-between; font-size: 14px; }
-    .nav a { color: #a0aec0; text-decoration: none; margin-left: 18px; }
-    .nav a:hover, .nav a.active { color: #fff; }
-    .container { max-width: 1200px; margin: 40px auto; padding: 0 24px; }
-    .card { background: #fff; border-radius: 12px; padding: 28px; box-shadow: 0 2px 12px rgba(0,0,0,.08); }
-    h1 { font-size: 22px; margin-bottom: 4px; }
-    p.sub { color: #666; margin-bottom: 22px; font-size: 14px; }
-    .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap: 14px; }
-    input, select { width: 100%; padding: 10px 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
-    .actions { display: flex; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
-    .btn { padding: 11px 22px; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; text-decoration: none; }
-    .btn-primary { background: #1a1a2e; color: #fff; }
-    .btn-primary:hover { background: #16213e; }
-    .btn-success { background: #28a745; color: #fff; }
-    .btn-success:hover { background: #218838; }
-    .meta { margin-top: 18px; color: #555; font-size: 14px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; }
-    th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid #eee; }
-    th { background: #f7f7f9; color: #333; }
-    tr:hover td { background: #fafbff; }
-    a.cell { color: #1a1a2e; font-weight: 600; text-decoration: none; }
-    a.cell:hover { text-decoration: underline; }
-    .pill { display: inline-block; background: #eef0fa; color: #1a1a2e; border-radius: 10px;
-            padding: 2px 8px; margin: 2px; font-size: 12px; }
-    .flash { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
-    .flash.success { background: #d4edda; color: #155724; }
-    .flash.error { background: #f8d7da; color: #721c24; }
-    .pager { margin-top: 16px; font-size: 14px; }
-    .pager a { color: #1a1a2e; margin: 0 6px; }
-  </style>
-</head>
-<body>
-  <div class="nav">
-    <span><strong>Vicit Data Intelligence</strong></span>
-    <span>
-      <a href="{{ url_for('search') }}" class="active">Search</a>
-      {% if session.role == 'admin' %}
-      <a href="{{ url_for('upload') }}">Enrich</a>
-      <a href="{{ url_for('admin') }}">Admin</a>
-      <a href="{{ url_for('manage_users') }}">Users</a>
-      {% endif %}
-      <a href="{{ url_for('logout') }}">Logout</a>
-    </span>
+{% extends "base.html" %}
+{% block title %}Search — Vicit Data Intelligence{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <h1>Data &amp; Technology Search</h1>
+      <p>Search the company, technology and market intelligence database.</p>
+    </div>
   </div>
-  <div class="container">
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% for cat, msg in messages %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}
-    {% endwith %}
-    <div class="card">
-      <h1>Data & Technology Search</h1>
-      <p class="sub">Search the company & technology intelligence database.</p>
-      <form method="GET" action="{{ url_for('search') }}">
-        <div class="filters">
-          <input type="text" name="q" placeholder="Company name..." value="{{ q }}">
-          <input type="text" name="industry" placeholder="Industry (e.g. Banking, Pharma)" value="{{ industry }}">
-          <select name="category">
-            <option value="">-- Technology --</option>
-            {% for key, label in categories.items() %}
-              <option value="{{ key }}" {% if category == key %}selected{% endif %}>{{ label }}</option>
-            {% endfor %}
-          </select>
-          <input type="text" name="location" placeholder="Location / city" value="{{ location }}">
-          <input type="text" name="partner" placeholder="Partner" value="{{ partner }}">
-        </div>
-        <div class="actions">
-          <button class="btn btn-primary" type="submit">Search</button>
-          <button class="btn btn-success" type="submit" name="export" value="1">Export Data Request (.xlsx)</button>
-        </div>
-      </form>
-      <div class="meta">{% if total %}Showing {{ results|length }} of {{ total }} companies{% else %}Enter criteria above to search.{% endif %}</div>
-      {% if results %}
+
+  {% if stats %}
+  <div class="stats">
+    <div class="stat"><div class="num">{{ '{:,}'.format(stats.companies) }}</div><div class="lbl">Companies</div></div>
+    <div class="stat"><div class="num">{{ '{:,}'.format(stats.tech_companies) }}</div><div class="lbl">With tech stack</div></div>
+    <div class="stat"><div class="num">{{ '{:,}'.format(stats.industries) }}</div><div class="lbl">Industries</div></div>
+    <div class="stat"><div class="num">{{ '{:,}'.format(total) }}</div><div class="lbl">Matching results</div></div>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <form method="GET" action="{{ url_for('search') }}">
+      <div class="filters">
+        <input type="text" name="q" placeholder="Company name..." value="{{ q }}">
+        <select name="industry">
+          <option value="">All industries</option>
+          {% for ind in industries %}
+            <option value="{{ ind }}" {% if industry == ind %}selected{% endif %}>{{ ind }}</option>
+          {% endfor %}
+        </select>
+        <select name="category">
+          <option value="">-- Technology --</option>
+          {% for key, label in categories.items() %}
+            <option value="{{ key }}" {% if category == key %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <input type="text" name="location" placeholder="Location / city" value="{{ location }}">
+        <input type="text" name="partner" placeholder="Partner" value="{{ partner }}">
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" type="submit">Search</button>
+        <button class="btn btn-success" type="submit" name="export" value="1">Export Data Request (.xlsx)</button>
+      </div>
+    </form>
+  </div>
+
+  {% if results %}
+  <div class="card" style="margin-top:24px;">
+    <div class="table-wrap">
       <table>
-        <tr>
-          <th>Account</th><th>Industry</th><th>Location</th><th>Technology</th><th>Source</th>
-        </tr>
+        <tr><th>Account</th><th>Industry</th><th>Location</th><th>Technology</th><th>Source</th></tr>
         {% for r in results %}
         <tr>
           <td><a class="cell" href="{{ url_for('company', normalized_name=r.normalized_name) }}">{{ r.account_name or r.normalized_name }}</a></td>
@@ -94,17 +58,16 @@
               {% if r[col] %}<span class="pill"><strong>{{ label }}</strong>: {{ r[col] }}</span>{% endif %}
             {% endfor %}
           </td>
-          <td>{{ r.enrichment_source or 'db' }}</td>
+          <td><span class="pill src-{{ r.enrichment_source or 'db' }}">{{ r.enrichment_source or 'db' }}</span></td>
         </tr>
         {% endfor %}
       </table>
-      <div class="pager">
-        {% if page > 1 %}<a href="{{ url_for('search', q=q, industry=industry, category=category, location=location, page=page-1) }}">&laquo; Prev</a>{% endif %}
-        Page {{ page }}
-        {% if results|length == per_page %}<a href="{{ url_for('search', q=q, industry=industry, category=category, location=location, page=page+1) }}">Next &raquo;</a>{% endif %}
-      </div>
-      {% endif %}
+    </div>
+    <div class="pager">
+      {% if page > 1 %}<a href="{{ url_for('search', q=q, industry=industry, category=category, location=location, page=page-1) }}">&laquo; Prev</a>{% endif %}
+      <span>Page {{ page }}</span>
+      {% if results|length == per_page %}<a href="{{ url_for('search', q=q, industry=industry, category=category, location=location, page=page+1) }}">Next &raquo;</a>{% endif %}
     </div>
   </div>
-</body>
-</html>
+  {% endif %}
+{% endblock %}

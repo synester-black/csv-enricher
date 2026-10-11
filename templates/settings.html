@@ -1,168 +1,102 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Vicit Data Intelligence - Settings</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-           background: #f0f2f5; min-height: 100vh; }
-    .nav { background: #1a1a2e; color: #fff; padding: 14px 24px; display: flex;
-           align-items: center; justify-content: space-between; font-size: 14px; }
-    .nav a { color: #a0aec0; text-decoration: none; margin-left: 20px; }
-    .nav a:hover { color: #fff; }
-    .container { max-width: 640px; margin: 40px auto; padding: 0 20px; }
-    .card { background: #fff; border-radius: 12px; padding: 32px 40px;
-            box-shadow: 0 2px 12px rgba(0,0,0,.08); margin-bottom: 20px; }
-    h1 { font-size: 20px; margin-bottom: 16px; }
-    h2 { font-size: 15px; margin-bottom: 12px; color: #444; padding-bottom: 6px; border-bottom: 1px solid #eee; }
-    label { display: block; font-size: 13px; font-weight: 600; color: #555; margin-bottom: 4px; }
-    input[type=text], input[type=url], input[type=password] { width: 100%; padding: 9px 12px; border: 1px solid #ddd;
-           border-radius: 6px; font-size: 14px; margin-bottom: 14px; }
-    .help { font-size: 12px; color: #888; margin-top: -10px; margin-bottom: 14px; }
-    button { padding: 10px 28px; background: #1a1a2e; color: #fff; border: none;
-             border-radius: 6px; font-size: 14px; cursor: pointer; }
-    button:hover { background: #16213e; }
-    .flash { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
-    .flash.success { background: #d4edda; color: #155724; }
-    .flash.error { background: #f8d7da; color: #721c24; }
-    .back { display: inline-block; margin-top: 16px; color: #1a1a2e; font-size: 14px; }
-    hr { border: none; border-top: 1px solid #eee; margin: 20px 0; }
-    .badge { display: inline-block; background: #e8f5e9; color: #2e7d32; font-size: 11px;
-             padding: 2px 8px; border-radius: 10px; margin-left: 6px; }
-  </style>
-</head>
-<body>
-  <div class="nav">
-    <span><strong>Vicit Data Intelligence</strong></span>
-    <span><a href="{{ url_for('upload') }}">&larr; Back</a></span>
+{% extends "base.html" %}
+{% block title %}Settings — Vicit Data Intelligence{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div><h1>Settings</h1><p>Model, ICP categories, prompts, SSO and security.</p></div>
   </div>
-  <div class="container">
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% for cat, msg in messages %}
-        <div class="flash {{ cat }}">{{ msg }}</div>
-      {% endfor %}
-    {% endwith %}
+  <form method="POST" style="max-width:760px;">
+    <div class="card" style="margin-bottom:20px;">
+      <h2 style="font-size:17px;margin-bottom:16px;">Ollama <span class="badge">AI Engine</span></h2>
+      <label for="ollama_url">Ollama API URL</label>
+      <input type="url" name="ollama_url" id="ollama_url" value="{{ ollama_url }}" placeholder="https://ollama.com">
 
-    <form method="POST">
-      <div class="card">
-        <h2>Ollama <span class="badge">AI Engine</span></h2>
-        <label for="ollama_url">Ollama API URL</label>
-        <input type="url" name="ollama_url" id="ollama_url"
-               value="{{ ollama_url }}" placeholder="https://ollama.com">
-        <div class="help">Your Ollama server address (local or cloud).</div>
-
-        <label for="ollama_model">Model Name</label>
-        <select name="ollama_model" id="ollama_model" style="width:100%;padding:10px 12px;border:1px solid #ccc;border-radius:6px;font-size:14px;">
-          <option value="{{ ollama_model }}">{{ ollama_model or 'Select a model…' }}</option>
-        </select>
-        <div class="help">Loaded live from your Ollama server on the button below, or type your own.</div>
-        <button type="button" id="refresh-models" style="margin-top:8px;padding:8px 16px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer;">Refresh available models</button>
-        <div class="help" id="models-msg"></div>
-
-        <label for="ollama_api_key">API Key</label>
-        <input type="password" name="ollama_api_key" id="ollama_api_key"
-               value="{{ ollama_api_key }}" placeholder="Bearer token if required">
-        <div class="help">Leave blank if your Ollama server doesn't require authentication.</div>
+      <label for="ollama_model">Model Name</label>
+      <select name="ollama_model" id="ollama_model">
+        <option value="{{ ollama_model }}">{{ ollama_model or 'Select a model…' }}</option>
+      </select>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:10px;">
+        <button type="button" id="refresh-models" class="btn btn-ghost">Refresh available models</button>
+        <span style="font-size:13px;color:var(--muted);" id="models-msg"></span>
       </div>
 
-      <div class="card">
-        <h2>ICP Technology Categories <span class="badge">Targeting</span></h2>
-        <p style="font-size:13px;color:#666;margin-bottom:12px;">Which technology categories matter for your ICP? Ticking fewer categories makes enrichment cheaper and more focused — only enabled categories are asked of the model.</p>
-        <div style="display:flex;flex-direction:column;gap:8px;">
-          {% for key, guidance in category_guidance.items() %}
-          <label style="display:flex;align-items:flex-start;gap:10px;font-size:14px;cursor:pointer;">
-            <input type="checkbox" name="software_categories" value="{{ key }}"
-              {% if key in software_categories %}checked{% endif %} style="margin-top:3px;">
-            <span><strong>{{ key }}</strong> — <span style="color:#666;font-weight:400;">{{ guidance }}</span></span>
-          </label>
-          {% endfor %}
-        </div>
+      <label for="ollama_api_key">API Key</label>
+      <input type="password" name="ollama_api_key" id="ollama_api_key" value="{{ ollama_api_key }}" placeholder="Bearer token if required">
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
+      <h2 style="font-size:17px;margin-bottom:12px;">ICP Technology Categories <span class="badge">Targeting</span></h2>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">Which technology categories matter for your ICP? Ticking fewer makes enrichment cheaper and more focused — only enabled categories are asked of the model.</p>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        {% for key, guidance in category_guidance.items() %}
+        <label style="display:flex;align-items:flex-start;gap:10px;font-size:14px;cursor:pointer;">
+          <input type="checkbox" name="software_categories" value="{{ key }}"
+            {% if key in software_categories %}checked{% endif %} style="margin-top:3px;width:auto;">
+          <span><strong>{{ key }}</strong> — <span style="color:var(--muted);font-weight:400;">{{ guidance }}</span></span>
+        </label>
+        {% endfor %}
       </div>
+    </div>
 
-      <div class="card">
-        <h2>Microsoft Entra ID SSO <span class="badge">Optional</span></h2>
-        <label for="app_url">App Public URL</label>
-        <input type="url" name="app_url" id="app_url"
-               value="{{ app_url }}" placeholder="https://yourapp.com">
-        <div class="help">Must match the Redirect URI registered in Azure (e.g. https://yourapp.com). Used for SSO callback.</div>
+    <div class="card" style="margin-bottom:20px;">
+      <h2 style="font-size:17px;margin-bottom:12px;">Prompts <span class="badge">Customise</span></h2>
+      <label for="software_prompt">Software Research Prompt</label>
+      <textarea name="software_prompt" id="software_prompt" rows="9">{{ software_prompt }}</textarea>
+      <p style="font-size:12px;color:var(--muted);margin:-6px 0 14px;">Placeholders: <code>{company_name}</code>, <code>{company_domain}</code>, <code>{categories}</code>. The <code>{categories}</code> placeholder is filled from your ICP categories. Must return valid JSON.</p>
 
-        <label for="microsoft_tenant_id">Tenant ID (Directory ID)</label>
-        <input type="text" name="microsoft_tenant_id" id="microsoft_tenant_id"
-               value="{{ microsoft_tenant_id }}" placeholder="00000000-0000-0000-0000-000000000000">
-        <div class="help">Found in Azure AD &rarr; Overview &rarr; Directory (tenant) ID.</div>
+      <label for="intent_prompt">Intent Research Prompt</label>
+      <textarea name="intent_prompt" id="intent_prompt" rows="9">{{ intent_prompt }}</textarea>
+      <p style="font-size:12px;color:var(--muted);margin:-6px 0 14px;">Placeholders: <code>{company_name}</code>, <code>{company_domain}</code>. Must return valid JSON.</p>
 
-        <label for="microsoft_client_id">Client ID (Application ID)</label>
-        <input type="text" name="microsoft_client_id" id="microsoft_client_id"
-               value="{{ microsoft_client_id }}" placeholder="00000000-0000-0000-0000-000000000000">
-        <div class="help">Found in Azure AD &rarr; App registrations &rarr; Your app &rarr; Application (client) ID.</div>
+      <label for="tier_prompt">Tier Classification Prompt</label>
+      <textarea name="tier_prompt" id="tier_prompt" rows="9">{{ tier_prompt }}</textarea>
+      <p style="font-size:12px;color:var(--muted);margin:-6px 0 0;">Placeholder: <code>{titles}</code> (newline-separated list). Must map each title to a tier.</p>
+    </div>
 
-        <label for="microsoft_client_secret">Client Secret</label>
-        <input type="password" name="microsoft_client_secret" id="microsoft_client_secret"
-               value="{{ microsoft_client_secret }}" placeholder="Generated in Azure AD">
-        <div class="help">Create in Azure AD &rarr; App registrations &rarr; Your app &rarr; Certificates & secrets.</div>
-
-        <label for="microsoft_allowed_domain">Restrict to Domain</label>
-        <input type="text" name="microsoft_allowed_domain" id="microsoft_allowed_domain"
-               value="{{ microsoft_allowed_domain }}" placeholder="vicit.com">
-        <div class="help">Only allow users with this email domain. Leave blank to allow any Microsoft account.</div>
+    <div class="card" style="margin-bottom:20px;">
+      <h2 style="font-size:17px;margin-bottom:12px;">Validation Regions <span class="badge">ICP Target</span></h2>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">A lead passes location checks if it matches ANY selected region.</p>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        {% for key, cfg in regions.items() %}
+        <label style="display:flex;align-items:center;gap:10px;font-size:14px;cursor:pointer;">
+          <input type="checkbox" name="validation_regions" value="{{ key }}"
+            {% if key in validation_regions.split(',') %}checked{% endif %} style="width:auto;">
+          {{ cfg.label }}
+        </label>
+        {% endfor %}
       </div>
+    </div>
 
-      <div class="card">
-        <h2>reCAPTCHA <span class="badge">Optional</span></h2>
-        <p style="font-size:13px;color:#666;margin-bottom:12px;">Protect the login form with Google reCAPTCHA v3. Get free keys at <a href="https://www.google.com/recaptcha/admin" target="_blank" style="color:#1a1a2e;">google.com/recaptcha/admin</a> &rarr; Create &rarr; reCAPTCHA v3.</p>
-        <label for="recaptcha_site_key">Site Key</label>
-        <input type="text" name="recaptcha_site_key" id="recaptcha_site_key"
-               value="{{ recaptcha_site_key }}" placeholder="6Lc...">
-        <label for="recaptcha_secret_key">Secret Key</label>
-        <input type="password" name="recaptcha_secret_key" id="recaptcha_secret_key"
-               value="{{ recaptcha_secret_key }}" placeholder="6Lc...">
-      </div>
+    <div class="card" style="margin-bottom:20px;">
+      <h2 style="font-size:17px;margin-bottom:12px;">Microsoft Entra ID SSO <span class="badge">Optional</span></h2>
+      <label for="app_url">App Public URL</label>
+      <input type="url" name="app_url" id="app_url" value="{{ app_url }}" placeholder="https://yourapp.com">
+      <label for="microsoft_tenant_id">Tenant ID</label>
+      <input type="text" name="microsoft_tenant_id" id="microsoft_tenant_id" value="{{ microsoft_tenant_id }}" placeholder="00000000-0000-0000-0000-000000000000">
+      <label for="microsoft_client_id">Client ID</label>
+      <input type="text" name="microsoft_client_id" id="microsoft_client_id" value="{{ microsoft_client_id }}" placeholder="00000000-0000-0000-0000-000000000000">
+      <label for="microsoft_client_secret">Client Secret</label>
+      <input type="password" name="microsoft_client_secret" id="microsoft_client_secret" value="{{ microsoft_client_secret }}">
+      <label for="microsoft_allowed_domain">Restrict to Domain</label>
+      <input type="text" name="microsoft_allowed_domain" id="microsoft_allowed_domain" value="{{ microsoft_allowed_domain }}" placeholder="vicit.com">
+    </div>
 
-      <div class="card">
-        <h2>Validation Regions <span class="badge">ICP Target</span></h2>
-        <p style="font-size:13px;color:#666;margin-bottom:12px;">Select one or more target regions. A lead passes location checks if it matches ANY selected region. Phone formats from all selected regions are accepted.</p>
-        <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
-          {% for key, cfg in regions.items() %}
-          <label style="display:flex;align-items:center;gap:10px;font-size:14px;cursor:pointer;font-weight:400;">
-            <input type="checkbox" name="validation_regions" value="{{ key }}"
-              {% if key in validation_regions.split(',') %}checked{% endif %}>
-            {{ cfg.label }}
-          </label>
-          {% endfor %}
-        </div>
-      </div>
+    <div class="card" style="margin-bottom:20px;">
+      <h2 style="font-size:17px;margin-bottom:12px;">reCAPTCHA <span class="badge">Optional</span></h2>
+      <label for="recaptcha_site_key">Site Key</label>
+      <input type="text" name="recaptcha_site_key" id="recaptcha_site_key" value="{{ recaptcha_site_key }}" placeholder="6Lc...">
+      <label for="recaptcha_secret_key">Secret Key</label>
+      <input type="password" name="recaptcha_secret_key" id="recaptcha_secret_key" value="{{ recaptcha_secret_key }}" placeholder="6Lc...">
+    </div>
 
-      <div class="card">
-        <h2>Prompts <span class="badge">Customise</span></h2>
-
-        <label for="software_prompt">Software Research Prompt</label>
-        <textarea name="software_prompt" id="software_prompt" rows="8"
-          style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;font-family:monospace;margin-bottom:14px;">{{ software_prompt }}</textarea>
-        <div class="help">Placeholders: {company_name}, {company_domain} and {categories}. The {categories} placeholder is filled from your ICP Technology Categories above. Must return valid JSON.</div>
-
-        <label for="intent_prompt">Intent Research Prompt</label>
-        <textarea name="intent_prompt" id="intent_prompt" rows="8"
-          style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;font-family:monospace;margin-bottom:14px;">{{ intent_prompt }}</textarea>
-        <div class="help">Uses {company_name} and {company_domain} as placeholders. Must return valid JSON.</div>
-
-        <label for="tier_prompt">Tier Classification Prompt</label>
-        <textarea name="tier_prompt" id="tier_prompt" rows="8"
-          style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;font-family:monospace;margin-bottom:14px;">{{ tier_prompt }}</textarea>
-        <div class="help">Uses {titles} as placeholder (newline-separated list). Must map each title to a tier value (e.g. <code>{"title": "Tier 1"}</code>).</div>
-      </div>
-
-      <div style="text-align:center;margin-bottom:20px;">
-        <button type="submit">Save All Settings</button>
-      </div>
-    </form>
-    <a class="back" href="{{ url_for('upload') }}">&larr; Back to Upload</a>
-  </div>
+    <div style="text-align:center;">
+      <button class="btn btn-accent" type="submit" style="padding:13px 44px;font-size:15px;">Save All Settings</button>
+    </div>
+  </form>
+{% endblock %}
+{% block scripts %}
   <script>
     const modelSel = document.getElementById('ollama_model');
     const current = modelSel.options[0].value;
-
     async function loadModels() {
       const msg = document.getElementById('models-msg');
       msg.textContent = 'Loading models…';
@@ -188,5 +122,4 @@
     document.getElementById('refresh-models').addEventListener('click', loadModels);
     loadModels();
   </script>
-</body>
-</html>
+{% endblock %}

@@ -279,7 +279,7 @@ def settings():
         validation_regions=session.get('validation_regions', 'uk'),
         regions=REGIONS,
         software_categories=active,
-        category_guidance=CATEGORY_GUIDANCE)
+        category_guidance=CATEGORY_GUIDANCE, active='settings')
 
 # ---------------------------------------------------------------------------
 # Routes – Upload
@@ -288,12 +288,14 @@ def settings():
 def landing():
     if 'user' in session:
         return redirect(url_for('search'))
-    return render_template('landing.html')
+    stats = dbstore.db_stats() if dbstore.DATABASE_URL else None
+    industries = dbstore.distinct_industries() if dbstore.DATABASE_URL else []
+    return render_template('landing.html', stats=stats, industries=industries)
 
 @app.route('/enrich', methods=['GET'])
 @login_required
 def upload():
-    return render_template('upload.html')
+    return render_template('upload.html', active='enrich')
 
 @app.route('/upload', methods=['POST'])
 @login_required
@@ -1563,7 +1565,7 @@ def manage_users():
             else:
                 flash('Old password incorrect', 'error')
     users = list_users()
-    return render_template('users.html', users=users, current_user=session.get('user', ''))
+    return render_template('users.html', users=users, current_user=session.get('user', ''), active='users')
 
 
 # ---------------------------------------------------------------------------
@@ -1598,7 +1600,9 @@ def search():
     return render_template('search.html', results=results, total=total, page=page,
                            per_page=50, categories=CATEGORY_COL, columns=CAT_COLUMN_LABEL,
                            q=q, industry=industry, category=category,
-                           location=location, partner=partner)
+                           location=location, partner=partner,
+                           industries=dbstore.distinct_industries(),
+                           stats=dbstore.db_stats(), active='search')
 
 
 def _export_search(rows):
@@ -1670,7 +1674,7 @@ def admin():
                 result = f'Ingested {written} companies'
             except Exception as e:
                 result = f'Error: {e}'
-    return render_template('admin.html', result=result)
+    return render_template('admin.html', result=result, active='admin')
 
 
 # ---------------------------------------------------------------------------

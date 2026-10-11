@@ -1,96 +1,35 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Vicit Data Intelligence - Upload</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-           background: #f0f2f5; min-height: 100vh; }
-    .nav { background: #1a1a2e; color: #fff; padding: 14px 24px; display: flex;
-           align-items: center; justify-content: space-between; font-size: 14px; }
-    .nav a { color: #a0aec0; text-decoration: none; margin-left: 20px; }
-    .nav a:hover { color: #fff; }
-    .nav .user { color: #a0aec0; }
-    .container { max-width: 640px; margin: 60px auto; padding: 0 20px; }
-    .card { background: #fff; border-radius: 12px; padding: 40px;
-            box-shadow: 0 2px 12px rgba(0,0,0,.08); }
-    h1 { font-size: 22px; margin-bottom: 8px; }
-    p.sub { color: #666; margin-bottom: 24px; font-size: 14px; }
-    .drop-zone { border: 2px dashed #ccc; border-radius: 8px; padding: 48px 24px;
-                 text-align: center; cursor: pointer; transition: all .2s; }
-    .drop-zone:hover, .drop-zone.dragover { border-color: #1a1a2e; background: #f8f9ff; }
-    .drop-zone.has-file { border-color: #28a745; background: #f0fff4; }
-    .drop-zone .icon { font-size: 40px; color: #aaa; margin-bottom: 12px; }
-    .drop-zone p { color: #666; font-size: 14px; }
-    .drop-zone .filename { color: #1a1a2e; font-weight: 600; margin-top: 8px; }
-    button { padding: 12px 32px; background: #1a1a2e; color: #fff; border: none;
-             border-radius: 6px; font-size: 15px; cursor: pointer; margin-top: 20px; display: none; }
-    button:hover { background: #16213e; }
-    button.show { display: inline-block; }
-    .flash { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
-    .flash.success { background: #d4edda; color: #155724; }
-    .flash.error { background: #f8d7da; color: #721c24; }
-  </style>
-</head>
-<body>
-  <div class="nav">
-    <span><strong>Vicit Data Intelligence</strong></span>
-    <span>
-      <span class="user">{{ session.user }}</span>
-      <a href="{{ url_for('search') }}">Search</a>
-      <a href="{{ url_for('settings') }}">Settings</a>
-      {% if session.role == 'admin' %}
-      <a href="{{ url_for('admin') }}">Admin</a>
-      <a href="{{ url_for('manage_users') }}">Users</a>
-      {% endif %}
-      <a href="{{ url_for('logout') }}">Logout</a>
-    </span>
-  </div>
-  <div class="container">
-    <div class="card">
-      <h1>Upload Leads (CSV / XLSX / XLS)</h1>
-      <p class="sub">Upload a CSV or Excel file. The app enriches it with Software stack, Intent, Tier classification, and validation — resolving known companies from the database first, then the AI model for the rest.</p>
-      {% with messages = get_flashed_messages(with_categories=true) %}
-        {% for cat, msg in messages %}
-          <div class="flash {{ cat }}">{{ msg }}</div>
-        {% endfor %}
-      {% endwith %}
-      <form method="POST" action="{{ url_for('handle_upload') }}" enctype="multipart/form-data" id="upload-form">
-        <div class="drop-zone" id="drop-zone">
-          <div class="icon">&#128196;</div>
-          <p>Drag & drop your CSV or Excel file here, or click to browse</p>
-          <div class="filename" id="filename"></div>
-        </div>
-        <input type="file" name="file" id="file-input" accept=".csv,.xlsx,.xlsm,.xls" style="display:none">
-        <button type="submit" id="submit-btn">Start Processing</button>
-      </form>
-    </div>
+{% extends "base.html" %}
+{% block title %}Upload &amp; Enrich — Vicit Data Intelligence{% endblock %}
+{% block content %}
+  <div class="card" style="max-width:680px;margin:24px auto;">
+    <h1 style="font-size:22px;margin-bottom:6px;">Upload Leads (CSV / XLSX / XLS)</h1>
+    <p style="color:var(--muted);font-size:14px;margin-bottom:22px;">The app enriches it with Software stack, Intent, Tier classification, and validation — resolving known companies from the database first, then the AI model for the rest.</p>
+    <form method="POST" action="{{ url_for('handle_upload') }}" enctype="multipart/form-data" id="upload-form">
+      <div class="drop-wrap" id="drop-zone" style="border:2px dashed var(--line);border-radius:12px;padding:42px 22px;text-align:center;cursor:pointer;transition:.2s;">
+        <div style="font-size:38px;color:var(--accent-2);">&#128196;</div>
+        <p style="color:var(--muted);margin-top:10px;">Drag &amp; drop your CSV or Excel file here, or click to browse</p>
+        <div id="filename" style="color:var(--text);font-weight:600;margin-top:8px;"></div>
+      </div>
+      <input type="file" name="file" id="file-input" accept=".csv,.xlsx,.xlsm,.xls" style="display:none">
+      <div class="actions">
+        <button type="submit" id="submit-btn" class="btn btn-accent" style="display:none;">Start Processing</button>
+      </div>
+    </form>
   </div>
   <script>
     const zone = document.getElementById('drop-zone');
     const input = document.getElementById('file-input');
     const fn = document.getElementById('filename');
     const btn = document.getElementById('submit-btn');
-
     zone.addEventListener('click', () => input.click());
-    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
-    zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
-    zone.addEventListener('drop', e => { e.preventDefault(); zone.classList.remove('dragover');
-      if (e.dataTransfer.files.length) { input.files = e.dataTransfer.files; showFile(); } });
-    input.addEventListener('change', showFile);
-    function showFile() {
-      if (input.files.length) {
-        fn.textContent = input.files[0].name;
-        zone.classList.add('has-file');
-        btn.classList.add('show');
-      } else {
-        fn.textContent = '';
-        zone.classList.remove('has-file');
-        btn.classList.remove('show');
-      }
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.style.borderColor='var(--accent)'; });
+    zone.addEventListener('dragleave', () => zone.style.borderColor='var(--line)');
+    zone.addEventListener('drop', e => { e.preventDefault(); zone.style.borderColor='var(--line)';
+      if (e.dataTransfer.files.length) { input.files = e.dataTransfer.files; show(); } });
+    input.addEventListener('change', show);
+    function show() {
+      if (input.files.length) { fn.textContent = input.files[0].name; btn.style.display='inline-flex'; }
+      else { fn.textContent = ''; btn.style.display='none'; }
     }
   </script>
-</body>
-</html>
+{% endblock %}

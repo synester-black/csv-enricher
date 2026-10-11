@@ -1,83 +1,37 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Vicit Data Intelligence</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-           color: #1a1a2e; background: #fff; min-height: 100vh; }
-    .nav { background: #fff; padding: 16px 32px; display: flex; align-items: center;
-           justify-content: space-between; font-size: 14px; position: sticky; top: 0;
-           box-shadow: 0 1px 4px rgba(0,0,0,.06); }
-    .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 20px; letter-spacing: 1px; }
-    .brand .dot { color: #28a745; }
-    .nav a.cta { text-decoration: none; margin-left: 18px; }
-    .nav .btn { padding: 9px 20px; border-radius: 6px; font-weight: 600; font-size: 13px; }
-    .btn-outline { border: 1.5px solid #1a1a2e; color: #1a1a2e; }
-    .btn-fill { background: #1a1a2e; color: #fff; border: 1.5px solid #1a1a2e; }
-    .btn-outline:hover, .btn-fill:hover { opacity: .85; }
-    .hero { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: #fff;
-            padding: 88px 32px; text-align: center; }
-    .hero h1 { font-size: 42px; max-width: 760px; margin: 0 auto 18px; line-height: 1.15; }
-    .hero h1 span { color: #7ab8ff; }
-    .hero p { font-size: 18px; color: #c9cede; max-width: 640px; margin: 0 auto 30px; line-height: 1.5; }
-    .hero .btn { padding: 14px 34px; margin: 0 8px; text-decoration: none; border-radius: 7px; font-weight: 600; font-size: 15px; display: inline-block; }
-    .services { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px,1fr));
-                gap: 24px; max-width: 1080px; margin: 60px auto; padding: 0 32px; }
-    .svc { border: 1px solid #eee; border-radius: 12px; padding: 28px; }
-    .svc h3 { margin-bottom: 8px; font-size: 18px; }
-    .svc p { color: #666; font-size: 14px; line-height: 1.5; }
-    .section { padding: 0 32px; }
-    .contact { background: #f6f7fb; padding: 56px 32px; text-align: center; margin-top: 40px; }
-    .contact h2 { margin-bottom: 16px; }
-    .contact a { color: #1a1a2e; font-size: 18px; text-decoration: none; display: inline-block; margin: 6px 10px; }
-    .contact .phone { color: #555; font-size: 18px; }
-    footer { padding: 28px 32px; text-align: center; background: #1a1a2e; color: #a0aec0; font-size: 13px; }
-    footer a { color: #c9cede; text-decoration: none; margin: 0 8px; }
-    footer .socials { margin: 10px 0; }
-  </style>
-</head>
-<body>
-  <div class="nav">
-    <div class="brand">VICIT <span class="dot">&#9679;</span> Data Intelligence</div>
-    <div>
-      <a class="cta btn btn-outline" href="{{ url_for('login') }}">Log in</a>
-      <a class="cta btn btn-fill" href="{{ url_for('signup') }}">Get started</a>
-    </div>
-  </div>
-
+{% extends "base.html" %}
+{% block title %}Vicit Data Intelligence{% endblock %}
+{% block content %}
   <section class="hero">
     <h1>Fix the high value gaps in your target market with the <span>scaling toolkit</span> for growth.</h1>
     <p>Data intelligence for leadership teams — the designs, the frameworks, the tools and the manpower.</p>
-    <a class="btn btn-fill" href="{{ url_for('signup') }}">Create a free account</a>
-    <a class="btn btn-outline" href="{{ url_for('login') }}" style="border-color:#c9cede;color:#fff;">Log in</a>
+    <a class="btn btn-accent" href="{{ url_for('signup') }}">Create a free account</a>
+    <a class="btn btn-outline" href="{{ url_for('login') }}" style="border-color:#c9d3e8;color:#fff;">Log in</a>
   </section>
 
-  <section class="services">
-    <div class="svc"><h3>Empowering growth</h3><p>Search technology &amp; market intelligence across accounts, industries and tools.</p></div>
-    <div class="svc"><h3>Driving scale</h3><p>Export ready-to-use data-request templates to feed your sales cycle.</p></div>
-    <div class="svc"><h3>Building your team</h3><p>Understand the tech stack and intent signals behind modern buyers.</p></div>
-  </section>
+  {% if stats %}
+  <div class="stats" style="margin-top:24px;">
+    <div class="stat"><div class="num">{{ '{:,}'.format(stats.companies) }}</div><div class="lbl">Companies profiled</div></div>
+    <div class="stat"><div class="num">{{ '{:,}'.format(stats.tech_companies) }}</div><div class="lbl">With technology stack</div></div>
+    <div class="stat"><div class="num">{{ '{:,}'.format(stats.industries) }}</div><div class="lbl">Industries covered</div></div>
+    <div class="stat"><div class="num">{{ '{:,}'.format(stats.users) }}</div><div class="lbl">Platform users</div></div>
+  </div>
+  {% endif %}
 
-  <section class="contact">
-    <h2>Get in touch today</h2>
-    <div><a href="mailto:hello@vicit.com">hello@vicit.com</a></div>
-    <div class="phone">020 3475 9050</div>
-    <p style="color:#888;font-size:14px;margin-top:14px;">Every request handled by the Vicit team.</p>
-  </section>
-
-  <footer>
-    <div>
-      <a href="#">Who we are</a><a href="#">Services</a><a href="#">Industry roles</a>
-    </div>
-    <div class="socials">
-      <a href="https://www.linkedin.com/company/vicitgroup">LinkedIn</a>
-      <a href="https://www.instagram.com/vicit_advisory">Instagram</a>
-      <a href="https://twitter.com/vicit_advisory">Twitter</a>
-    </div>
-    <div>Vicit Limited &copy; 2025 &nbsp;|&nbsp; Registered Number: 09852094</div>
-  </footer>
-</body>
-</html>
+  <div class="card" style="margin-top:24px;">
+    <h2 style="font-size:20px;margin-bottom:6px;">Explore by industry</h2>
+    <p style="color:var(--muted);font-size:14px;margin-bottom:16px;">Jump straight into a sector, or sign in to run a full search.</p>
+    <form method="GET" action="{{ url_for('search') }}">
+      <div class="filters">
+        <select name="industry">
+          <option value="">All industries</option>
+          {% for ind in industries %}
+            <option value="{{ ind }}">{{ ind }}</option>
+          {% endfor %}
+        </select>
+        <div class="actions" style="margin:0;">
+          <button class="btn btn-primary" type="submit">Search this industry</button>
+        </div>
+      </div>
+    </form>
+  </div>
+{% endblock %}

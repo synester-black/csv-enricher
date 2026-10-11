@@ -1,60 +1,20 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Admin - Market Intelligence</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-           background: #f0f2f5; min-height: 100vh; }
-    .nav { background: #1a1a2e; color: #fff; padding: 14px 24px; display: flex;
-           align-items: center; justify-content: space-between; font-size: 14px; }
-    .nav a { color: #a0aec0; text-decoration: none; margin-left: 18px; }
-    .nav a:hover { color: #fff; }
-    .container { max-width: 720px; margin: 40px auto; padding: 0 24px; }
-    .card { background: #fff; border-radius: 12px; padding: 28px; box-shadow: 0 2px 12px rgba(0,0,0,.08); }
-    h1 { font-size: 22px; margin-bottom: 6px; }
-    p.sub { color: #666; margin-bottom: 20px; font-size: 14px; }
-    label { display: block; font-size: 13px; color: #555; margin: 14px 0 6px; }
-    input[type=file] { font-size: 14px; }
-    .btn { padding: 11px 22px; background: #1a1a2e; color: #fff; border: none; border-radius: 6px;
-           font-size: 14px; cursor: pointer; margin-top: 14px; }
-    .btn:hover { background: #16213e; }
-    .result { margin-top: 16px; padding: 12px 14px; border-radius: 6px; font-size: 14px;
-              background: #d4edda; color: #155724; }
-    .result.err { background: #f8d7da; color: #721c24; }
-    .flash { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
-    .flash.success { background: #d4edda; color: #155724; }
-    .flash.error { background: #f8d7da; color: #721c24; }
-  </style>
-</head>
-<body>
-  <div class="nav">
-    <span><strong>Vicit Data Intelligence</strong></span>
-    <span>
-      <a href="{{ url_for('search') }}">Search</a>
-      <a href="{{ url_for('upload') }}">Enrich</a>
-      <a href="{{ url_for('manage_users') }}">Users</a>
-      <a href="{{ url_for('logout') }}">Logout</a>
-    </span>
-  </div>
-  <div class="container">
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% for cat, msg in messages %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}
-    {% endwith %}
-    <div class="card">
+{% extends "base.html" %}
+{% block title %}Admin — Vicit Data Intelligence{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
       <h1>Admin</h1>
-      <p class="sub">Load the master database workbook into the searchable cache.</p>
-      <form method="POST" action="{{ url_for('admin') }}" enctype="multipart/form-data">
-        <label>Master database workbook (.xlsx)</label>
-        <input type="file" name="workbook" accept=".xlsx" required>
-        <button class="btn" type="submit">Import Master Data</button>
-      </form>
-      {% if result %}
-        <div class="result {% if result.startswith('Error') %}err{% endif %}">{{ result }}</div>
-      {% endif %}
+      <p>Load the master database workbook into the searchable cache.</p>
     </div>
   </div>
-</body>
-</html>
+  <div class="card" style="max-width:680px;">
+    <form method="POST" action="{{ url_for('admin') }}" enctype="multipart/form-data">
+      <label>Master database workbook (.xlsx)</label>
+      <input type="file" name="workbook" accept=".xlsx" required>
+      <div class="actions"><button class="btn btn-accent" type="submit">Import Master Data</button></div>
+    </form>
+    {% if result %}
+      <div class="flash {{ 'success' if not result.startswith('Error') else 'error' }}" style="margin-top:18px;margin-bottom:0;">{{ result }}</div>
+    {% endif %}
+  </div>
+{% endblock %}
