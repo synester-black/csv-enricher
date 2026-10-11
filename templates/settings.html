@@ -38,6 +38,24 @@
     </div>
 
     <div class="card" style="margin-bottom:20px;">
+      <h2 style="font-size:17px;margin-bottom:12px;">ICP Job Titles <span class="badge">Targeting</span></h2>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">
+        Titles you target. Similar titles match automatically (e.g. “CFO” also covers Finance Director, Head of Finance, VP Finance…).
+        Add one at a time, or paste a comma-separated list.
+      </p>
+      <div id="icp-chips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;min-height:8px;"></div>
+      <div style="display:flex;gap:10px;">
+        <input id="icp-input" list="icp-title-list" style="flex:1;"
+               placeholder="Add a title, or paste a comma-separated list…">
+        <button type="button" id="icp-add" class="btn btn-ghost">Add</button>
+      </div>
+      <datalist id="icp-title-list">
+        {% for t in common_titles %}<option value="{{ t }}"></option>{% endfor %}
+      </datalist>
+      <div id="icp-hidden"></div>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
       <h2 style="font-size:17px;margin-bottom:12px;">Prompts <span class="badge">Customise</span></h2>
       <label for="software_prompt">Software Research Prompt</label>
       <textarea name="software_prompt" id="software_prompt" rows="9">{{ software_prompt }}</textarea>
@@ -121,5 +139,50 @@
     }
     document.getElementById('refresh-models').addEventListener('click', loadModels);
     loadModels();
+
+    // --- ICP job titles (chips + comma-separated paste) ---
+    let icpTitles = {{ icp_titles|tojson }};
+    const chips = document.getElementById('icp-chips');
+    const hidden = document.getElementById('icp-hidden');
+    function renderIcp() {
+      chips.innerHTML = '';
+      hidden.innerHTML = '';
+      icpTitles.forEach((t, i) => {
+        const chip = document.createElement('span');
+        chip.className = 'pill';
+        chip.style.display = 'inline-flex';
+        chip.style.alignItems = 'center';
+        chip.style.gap = '6px';
+        chip.textContent = t;
+        const x = document.createElement('a');
+        x.textContent = '×';
+        x.href = '#';
+        x.style.color = 'var(--err)';
+        x.style.fontWeight = '700';
+        x.onclick = (e) => { e.preventDefault(); icpTitles.splice(i, 1); renderIcp(); };
+        chip.appendChild(x);
+        chips.appendChild(chip);
+        const h = document.createElement('input');
+        h.type = 'hidden'; h.name = 'icp_titles'; h.value = t;
+        hidden.appendChild(h);
+      });
+    }
+    function addTitles(text) {
+      text.split(/[,\n;]/).forEach(part => {
+        const t = part.trim();
+        if (t && !icpTitles.some(x => x.toLowerCase() === t.toLowerCase())) icpTitles.push(t);
+      });
+      renderIcp();
+    }
+    const icpInput = document.getElementById('icp-input');
+    document.getElementById('icp-add').addEventListener('click', () => { addTitles(icpInput.value); icpInput.value = ''; });
+    icpInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); addTitles(icpInput.value); icpInput.value = ''; }
+    });
+    icpInput.addEventListener('paste', e => {
+      const txt = (e.clipboardData || window.clipboardData).getData('text');
+      if (txt && /[,\n;]/.test(txt)) { e.preventDefault(); addTitles(txt); }
+    });
+    renderIcp();
   </script>
 {% endblock %}

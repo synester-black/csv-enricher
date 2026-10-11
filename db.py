@@ -548,6 +548,25 @@ COMMON_JOB_TITLES = sorted({
 })
 
 
+def expand_titles(titles):
+    """Expand a list of titles into the full set of similar-title variants."""
+    out = set()
+    for t in titles or []:
+        out.update(_title_variants(t))
+    return out
+
+
+def title_in_icp(title, icp_titles):
+    """True if ``title`` matches any configured ICP title (with similar titles)."""
+    if not title or not icp_titles:
+        return False
+    t = title.strip().lower()
+    for v in expand_titles(icp_titles):
+        if v and (v in t or t in v):
+            return True
+    return False
+
+
 def search_companies(q='', industry='', category='', location='', partner='',
                      title='', page=1, per_page=50, org_id=None):
     """Search companies by text / filters. Returns (rows, total)."""

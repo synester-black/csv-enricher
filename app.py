@@ -257,6 +257,17 @@ def settings():
         session['recaptcha_secret_key'] = request.form.get('recaptcha_secret_key', '')
         session['validation_regions'] = ','.join(request.form.getlist('validation_regions')) or 'uk'
         session['software_categories'] = request.form.getlist('software_categories') or DEFAULT_SOFTWARE_CATEGORIES
+        # ICP job titles: accept multiple values and comma/newline separated pastes
+        raw_titles = []
+        for chunk in request.form.getlist('icp_titles'):
+            raw_titles += re.split(r'[,\n;]', chunk)
+        seen, icp_titles = set(), []
+        for t in raw_titles:
+            t = t.strip()
+            if t and t.lower() not in seen:
+                seen.add(t.lower())
+                icp_titles.append(t)
+        session['icp_titles'] = icp_titles
         flash('Settings saved', 'success')
         _init_microsoft_oauth()  # Re-init with new values
         return redirect(url_for('settings'))
@@ -264,6 +275,7 @@ def settings():
     ip = session.get('intent_prompt', INTENT_PROMPT)
     tp = session.get('tier_prompt', TIER_PROMPT)
     active = session.get('software_categories', DEFAULT_SOFTWARE_CATEGORIES)
+    icp_titles = session.get('icp_titles', [])
     return render_template('settings.html',
         ollama_url=session.get('ollama_url', OLLAMA_BASE_URL),
         ollama_model=session.get('ollama_model', OLLAMA_MODEL),
@@ -279,7 +291,8 @@ def settings():
         validation_regions=session.get('validation_regions', 'uk'),
         regions=REGIONS,
         software_categories=active,
-        category_guidance=CATEGORY_GUIDANCE, active='settings')
+        category_guidance=CATEGORY_GUIDANCE, active='settings',
+        icp_titles=icp_titles, common_titles=dbstore.COMMON_JOB_TITLES)
 
 # ---------------------------------------------------------------------------
 # Routes – Upload
@@ -411,6 +424,7 @@ def mapping(task_id):
             'validation_regions': session.get('validation_regions', 'uk'),
             'software_categories': session.get('software_categories',
                                                DEFAULT_SOFTWARE_CATEGORIES),
+            'icp_titles': session.get('icp_titles', []),
         }
 
         threading.Thread(
@@ -1033,7 +1047,7 @@ def get_company_domain(company):
     slug = company.lower().replace(' ', '').replace("'", '').replace('&', 'and')
     return f'{slug}.com'
 
-def validate_row_deterministic(row_dict, regions=None):
+def validate_row_deterministic(row_dict, regions=None, icp_titles=None):
     """Run Prompt 3 logic deterministically (much faster than LLM)."""
     if regions is None:
         regions = ['uk']
@@ -1095,13 +1109,19 @@ def validate_row_deterministic(row_dict, regions=None):
             first_rc = REGIONS.get(regions[0], REGIONS['uk'])
             country_issues.append(first_rc['country_issue'])
 
-    # ICP check
-    icp_kw = ['finance','fp&a','financial planning','commercial finance','business intelligence',
-              'finance systems','corporate performance','epm','planning','reporting',
-              'controlling','transformation','financial control','cfo','chief financial',
-              'accounting','treasury','audit']
-    if title and not any(k in title.lower() for k in icp_kw):
-        issues.append('Outside ICP')
+    # ICP check — use configured ICP job titles (with similar-title expansion)
+    # when present, otherwise fall back to the built-in finance keyword list.
+    if title:
+        if icp_titles:
+            if not dbstore.title_in_icp(title, icp_titles):
+                issues.append('Outside ICP')
+        else:
+            icp_kw = ['finance','fp&a','financial planning','commercial finance','business intelligence',
+                      'finance systems','corporate performance','epm','planning','reporting',
+                      'controlling','transformation','financial control','cfo','chief financial',
+                      'accounting','treasury','audit']
+            if not any(k in title.lower() for k in icp_kw):
+                issues.append('Outside ICP')
 
     # Tier
     tier = classify_tier_deterministic(title) if title else 'Unknown'
@@ -1188,6 +1208,7 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
     active_cats = [k for k in (ollama_cfg.get('software_categories')
                                or DEFAULT_SOFTWARE_CATEGORIES)
                    if k in CATEGORY_GUIDANCE] or DEFAULT_SOFTWARE_CATEGORIES
+    icp_titles = ollama_cfg.get('icp_titles') or []
 
     try:
         # Read input (CSV, XLSX or XLS)
@@ -1405,7 +1426,7 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
                 'company': company,
                 'country': row[col_map.get('country', 0)] if col_map.get('country', 0) < len(row) else '',
             }
-            v_result = validate_row_deterministic(rd, validation_regions)
+            v_result = validate_row_deterministic(rd, validation_regions, icp_titles)
 
             # Use LLM-classified tier when available, fall back to deterministic
             title_val = rd.get('title', '')
