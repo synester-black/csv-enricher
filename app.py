@@ -814,34 +814,42 @@ def render_software_prompt(template, company_name, company_domain, active_keys):
 
 INTENT_PROMPT = """You are a B2B Sales Intelligence Agent.
 
-Your task is to determine whether the following company has demonstrated financial capacity or intent to invest in enterprise software such as ERP, CRM, HRIS, Finance, Analytics, or other digital transformation initiatives.
+Assess the buying intent of the company below to invest in enterprise software (ERP, EPM/CPM, CRM, BI, Finance, Analytics, digital transformation).
 
 Company: {company_name}
 Company Domain: {company_domain}
 
-Research the company using reliable public sources including:
-- Crunchbase, PitchBook (public), Company press releases, Company Newsroom
-- TechCrunch, Business Wire, PR Newswire, Reuters, Bloomberg
-- SEC filings, London Stock Exchange / NYSE / NASDAQ announcements
-- Venture Capital announcements, Private Equity announcements
-- Official company website, Other reliable financial news sources
+Use reliable public sources: company newsroom/press releases, Crunchbase (public), TechCrunch, Reuters, Bloomberg, SEC filings and stock-exchange announcements, VC/PE announcements.
 
-Identify whether the company has any of the following:
-- Seed Funding, Angel Investment, Series A, Series B, Series C, Series D+
-- Venture Capital Funding, Growth Equity Investment, Private Equity Investment
-- Strategic Investment, IPO, Public Listing, Acquisition, Merger
-- Major Expansion, Significant Capital Investment
-- Recent Funding Announcement (within the last 5 years)
+Consider: funding rounds, PE/VC investment, IPO/public listing, M&A, major expansion, capital investment, or public digital-transformation initiatives.
 
 Rules:
 - Only use verified public information. Do not guess.
-- If multiple funding rounds exist, return the most recent significant funding event.
-- Include the funding type, announced amount (if public), and year.
-- If no funding information can be found, set "Funding Status" to "No Public Funding Found".
-- Return ONLY valid JSON. Do not include explanations, reasoning, or markdown.
+- Rate overall intent as exactly one of: High, Mid, or Low.
+  High = recent funding/investment/IPO/M&A or clear active transformation spend.
+  Mid = some signals or older funding, moderate capacity.
+  Low = no public signals or no funding found.
+- "Summary" must be a single plain-text line, at most 15 words, no JSON, no punctuation clutter.
+- Return ONLY valid JSON in exactly this shape: {{"Intent": "High|Mid|Low", "Summary": "one short line, max 15 words"}}"""
 
-Return as a JSON object like this:
-{{"Intent": {{"Funding Status": "", "Funding Type": "", "Funding Amount": "", "Funding Year": "", "Investors": [], "IPO / Public Company": "", "Acquisition / Merger": "", "Expansion": "", "Digital Transformation": "", "Overall Intent": ""}}}}"""
+
+def _intent_string(data):
+    """Normalise an intent result into a single brief one-liner: 'High - ...'."""
+    if not data:
+        return ''
+    if isinstance(data, str):
+        return data.strip()
+    if isinstance(data, dict):
+        level = data.get('Intent')
+        if isinstance(level, dict):
+            level = level.get('Overall Intent') or level.get('Intent') or ''
+        level = str(level or '').strip()
+        summary = data.get('Summary') or data.get('summary') or ''
+        summary = str(summary).strip()
+        if level and summary:
+            return f'{level} - {summary}'
+        return level or summary
+    return str(data)
 
 TIER_PROMPT = """You are a B2B Lead Tiering Agent.
 
@@ -1204,20 +1212,27 @@ def _software_complete(sw, keys=None):
 
 
 def _has_values(d):
-    return bool(d) and any(v for v in d.values() if v)
+    """True when the value carries content (handles dict or plain string)."""
+    if isinstance(d, str):
+        return bool(d.strip())
+    if isinstance(d, dict):
+        return any(v for v in d.values() if v)
+    return bool(d)
 
 
 def _parse_intent(s):
-    """Parse intent_data (a JSON string column) into a dict."""
-    if isinstance(s, dict):
-        return s
+    """Intent is stored as a brief one-liner string; tolerates legacy JSON."""
     if not s:
-        return {}
-    try:
-        d = json.loads(s)
-        return d if isinstance(d, dict) else {}
-    except Exception:
-        return {}
+        return ''
+    if isinstance(s, dict):
+        return _intent_string(s)
+    s = str(s).strip()
+    if s.startswith('{'):
+        try:
+            return _intent_string(json.loads(s))
+        except Exception:
+            return s
+    return s
 
 
 _last_persist = {}
@@ -1351,7 +1366,7 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
         for c in unique_companies:
             hit = db_hits.get(normalized_by_company[c])
             db_software_by_company[c] = row_to_software_dict(hit) if hit else {}
-            db_intent_by_company[c] = _parse_intent(hit.get('intent_data')) if hit else {}
+            db_intent_by_company[c] = _parse_intent(hit.get('intent_data')) if hit else ''
             domain_by_company[c] = ((hit.get('domain') if hit else '') or get_company_domain(c))
 
         # Phase 1 & 2: Software + Intent per company (DB values win, model fills gaps)
@@ -1367,7 +1382,7 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
 
             domain = domain_by_company[company]
             base_sw = dict(db_software_by_company.get(company) or {})
-            base_intent = db_intent_by_company.get(company) or {}
+            base_intent = db_intent_by_company.get(company) or ''
 
             model_used = False
             swit = [_software_complete(base_sw, active_cats), _has_values(base_intent)]
@@ -1395,8 +1410,8 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
                 _publish(task_id, status)
                 in_prompt = intent_prompt_tpl.format(company_name=company, company_domain=domain)
                 in_raw = _call_ollama(in_prompt, cfg=ollama_cfg)
-                in_data = _extract_json(in_raw) or {}
-                intent_final = in_data.get('Intent', in_data) if in_data else {}
+                in_data = _extract_json(in_raw)
+                intent_final = _intent_string(in_data if in_data is not None else in_raw)
                 model_used = True
             company_intent[company] = intent_final
             status['intent_phase'] = 'done'
@@ -1459,6 +1474,7 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
         db_records = []
         company_tiers = {}
         company_titles = {}
+        template_rows = []
 
         for idx, row in enumerate(rows):
             status['current_row'] = idx + 1
@@ -1478,9 +1494,9 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
             else:
                 new_row.append('N/A')
 
-            # Intent column
-            it = company_intent.get(company, {})
-            new_row.append(json.dumps(it) if it else '')
+            # Intent column (brief one-liner)
+            it = company_intent.get(company, '')
+            new_row.append(it if it else '')
 
             # Validation
             rd = {
@@ -1539,6 +1555,36 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
                 },
             })
 
+            # One data-request template row per contact / input row
+            hit = db_hits.get(normalized_by_company.get(company, '')) or {}
+            contact = {
+                'first_name': rd.get('first_name'), 'last_name': rd.get('last_name'),
+                'title': rd.get('title'), 'email': rd.get('email'),
+                'personal_email': rd.get('personal_email'),
+                'mobile': v_result.get('mobile_cleaned') or rd.get('mobile'),
+                'mobile_other': v_result.get('mobile_other_cleaned') or rd.get('mobile_other'),
+                'phone': rd.get('mobile_other') or rd.get('mobile'),
+                'city': rd.get('city'), 'country': rd.get('country'),
+                'tier': tier_value,
+            }
+            account = {
+                'account_name': company,
+                'account_id': hit.get('account_id'),
+                'website_url': hit.get('website_url'),
+                'linkedin_url': hit.get('linkedin_url'),
+                'industry': hit.get('industry'),
+                'employees': hit.get('employees'),
+                'location': hit.get('location'),
+                'account_type': hit.get('account_type'),
+                'partner': hit.get('partner'),
+                'intent_data': it,
+                'raw': hit.get('raw'),
+                **software_dict_to_row(sw),
+            }
+            template_rows.append(build_template_row(
+                account, contact,
+                {'tier': tier_value, 'source': source}))
+
         # Write output
         out_path = PROCESSED_DIR / f'{task_id}_output.csv'
         with open(out_path, 'w', newline='', encoding='utf-8') as f:
@@ -1546,37 +1592,7 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
             writer.writerow(new_header)
             writer.writerows(output_rows)
 
-        # Data-request template export (one row per company)
-        def _rep_tier(tiers):
-            best = None
-            for t in tiers:
-                m = re.match(r'(\d+)', str(t))
-                n = int(m.group(1)) if m else None
-                if n and (best is None or n < best):
-                    best = n
-            return f'Tier {best}' if best else ''
-
-        template_rows = []
-        for c in unique_companies:
-            hit = db_hits.get(normalized_by_company[c]) or {}
-            account = {
-                'account_name': c,
-                'website_url': hit.get('website_url'),
-                'linkedin_url': hit.get('linkedin_url'),
-                'industry': hit.get('industry'),
-                'location': hit.get('location'),
-                'account_type': hit.get('account_type'),
-                'partner': hit.get('partner'),
-                'intent_data': json.dumps(company_intent.get(c) or {}) if company_intent.get(c) else None,
-                'raw': hit.get('raw'),
-                **software_dict_to_row(company_software.get(c) or {}),
-            }
-            enrichment = {
-                'tier': _rep_tier(company_tiers.get(c, [])),
-                'source': source_map.get(c, 'model'),
-            }
-            template_rows.append(build_template_row(account, enrichment))
-
+        # Data-request template export (already built one row per contact)
         template_path = PROCESSED_DIR / f'{task_id}_data_request.xlsx'
         try:
             write_template_xlsx(template_rows, str(template_path))
@@ -1588,7 +1604,7 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
         writeback = []
         for c in unique_companies:
             sw = company_software.get(c) or {}
-            it = company_intent.get(c) or {}
+            it = company_intent.get(c) or ''
             if not sw and not it and not company_titles.get(c):
                 continue
             writeback.append({
@@ -1596,7 +1612,7 @@ def process_csv(task_id, input_path, ollama_cfg=None, column_map=None,
                 'account_name': c,
                 'domain': domain_by_company.get(c),
                 **software_dict_to_row(sw),
-                'intent_data': json.dumps(it) if it else None,
+                'intent_data': it or None,
                 'contact_titles': '; '.join(company_titles.get(c) or []) or None,
                 'enrichment_source': source_map.get(c, 'model'),
             })
@@ -1760,7 +1776,7 @@ def _export_search(rows):
             'tier': '',
             'source': hit.get('enrichment_source') or 'db',
         }
-        template_rows.append(build_template_row(account, enrichment))
+        template_rows.append(build_template_row(account, None, enrichment))
 
     buf = BytesIO()
     write_template_xlsx(template_rows, buf)
